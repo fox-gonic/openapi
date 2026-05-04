@@ -1,10 +1,39 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/fox-gonic/openapi/internal/cli"
 )
+
+func parseCommon(name string, args []string) (cli.Config, int) {
+	opts := newCommonOptions()
+	cmd := &cobra.Command{
+		Use:           name,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return nil
+		},
+	}
+	bindCommonFlags(cmd.Flags(), opts)
+	cmd.SetArgs(args)
+	if err := cmd.Execute(); err != nil {
+		return cli.Config{}, cli.ExitUsage
+	}
+	markOverridesFromFlags(opts, cmd.Flags())
+	cfg, err := configFromOptions(opts)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return cli.Config{}, cli.ExitUsage
+	}
+	return cfg, 0
+}
 
 func TestParseCommonHonorsWorkdirAndConfigFlags(t *testing.T) {
 	dir := t.TempDir()

@@ -211,30 +211,6 @@ func newCommonOptions() *commonOptions {
 	return &commonOptions{overrides: &cli.Overrides{}}
 }
 
-func parseCommon(name string, args []string) (cli.Config, int) {
-	opts := newCommonOptions()
-	cmd := &cobra.Command{
-		Use:           name,
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return nil
-		},
-	}
-	bindCommonFlags(cmd.Flags(), opts)
-	cmd.SetArgs(args)
-	if err := cmd.Execute(); err != nil {
-		return cli.Config{}, cli.ExitUsage
-	}
-	markOverridesFromFlags(opts, cmd.Flags())
-	cfg, err := configFromOptions(opts)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return cli.Config{}, cli.ExitUsage
-	}
-	return cfg, 0
-}
-
 func configFromOptions(opts *commonOptions) (cli.Config, error) {
 	opts.overrides.Sources = opts.sources.values
 	opts.overrides.SourcesSet = opts.sources.set

@@ -99,6 +99,8 @@ func main() {
 }
 `
 
+var driverTpl = template.Must(template.New("driver").Funcs(template.FuncMap{"quote": strconv.Quote}).Parse(driverTemplate))
+
 type DriverData struct {
 	Entry              Entry
 	Hook               Hook
@@ -126,8 +128,7 @@ func WriteDriver(cfg Config, entry Entry, hook *Hook, loader *ConfigLoader) (str
 		return "", err
 	}
 	var buf bytes.Buffer
-	tmpl := template.Must(template.New("driver").Funcs(template.FuncMap{"quote": strconv.Quote}).Parse(driverTemplate))
-	if err := tmpl.Execute(&buf, data); err != nil {
+	if err := driverTpl.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("render driver: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(driverDir, "main.go"), buf.Bytes(), 0o644); err != nil {

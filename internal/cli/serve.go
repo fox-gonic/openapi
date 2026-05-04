@@ -2,12 +2,15 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/goccy/go-yaml"
 
 	"github.com/fox-gonic/openapi/internal/cli/ui"
 )
@@ -66,11 +69,10 @@ func refreshSpec(cfg Config, state *servedSpec) error {
 		state.setError(err.Error())
 		return err
 	}
-	cfg.Format = FormatJSON
-	jsonBytes, _, err := RunPipeline(cfg)
+	jsonBytes, err := yaml.YAMLToJSON(yamlBytes)
 	if err != nil {
 		state.setError(err.Error())
-		return err
+		return fmt.Errorf("convert spec to json: %w", err)
 	}
 	state.set(yamlBytes, jsonBytes)
 	return nil
