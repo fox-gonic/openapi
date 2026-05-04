@@ -25,8 +25,8 @@ go install github.com/fox-gonic/openapi/cmd/fox-openapi@latest
 
 ## CLI Usage
 
-Expose an entry function that registers routes and returns a `*fox.Engine`.
-This function should not call `Run`:
+Expose an entry function that registers routes and returns a `*fox.Engine`, then
+point the CLI at that function:
 
 ```go
 package server
@@ -40,87 +40,24 @@ func NewEngine() *fox.Engine {
 }
 ```
 
-Entries may also accept `context.Context`, and may accept one config pointer as
-their second argument:
+The function should register routes but should not call `Run`. Entries may also
+accept `context.Context`, and may accept one config pointer as their second
+argument. When no config loader is configured, the CLI passes `nil` for that
+config argument so production code can share one route-registration entry with
+OpenAPI generation.
 
-```go
-func NewEngine(ctx context.Context, cfg *config.Config) (*fox.Engine, error) {
-	if cfg == nil {
-		return newRouteOnlyEngine(), nil
-	}
-	return newProductionEngine(ctx, cfg)
-}
-```
-
-When no config loader is provided, the CLI passes `nil` for the config
-argument. This lets production code share one route registration entry with
-OpenAPI generation without initializing databases or external providers.
-
-Create `fox-openapi.yaml` in the application root:
-
-```yaml
-entry: github.com/acme/myapp/internal/server.NewEngine
-out: api/openapi.yaml
-sources:
-  - ./...
-info:
-  title: Acme API
-  version: 1.0.0
-servers:
-  - url: https://api.example.com
-```
-
-For a config-taking entry, optionally load a real config:
-
-```yaml
-entry: github.com/acme/myapp/internal/server.NewEngine
-entryConfig:
-  loader: github.com/acme/myapp/internal/config.Load
-  path: config.yaml
-```
-
-For small setups, skip the YAML file and pass flags:
+Generate, verify, and preview the committed spec:
 
 ```bash
-fox-openapi generate \
-  --entry github.com/acme/myapp/internal/server.NewEngine \
-  --out api/openapi.yaml \
-  --title "Acme API"
-```
-
-Generate and verify the committed spec:
-
-```bash
+fox-openapi init --entry internal/server.NewEngine --title "Acme API"
 fox-openapi generate
 fox-openapi check
-```
-
-Preview locally with embedded offline UI assets:
-
-```bash
 fox-openapi serve --addr 127.0.0.1:8765 --ui swagger --ui scalar --ui redoc
 ```
 
-`serve` exposes `/openapi.yaml`, `/openapi.json`, `/docs`, `/scalar`, and
-`/redoc`. It watches Go source files by default and keeps the last usable spec
-when regeneration fails.
-
-Advanced metadata that needs Go values can be provided through an optional hook:
-
-```go
-func ConfigureOpenAPI() []openapi.Option {
-	return []openapi.Option{
-		openapi.Group("/users", openapi.Tags("users")),
-		openapi.Operation("GET", "/users/:id", openapi.Security("BearerAuth")),
-	}
-}
-```
-
-Then configure:
-
-```yaml
-metadataHook: github.com/acme/myapp/internal/openapimeta.ConfigureOpenAPI
-```
+See [../cmd/fox-openapi/README.md](../cmd/fox-openapi/README.md) for the full
+CLI reference, including config-taking entries, metadata hooks, config files,
+flags, CI, and troubleshooting.
 
 ## Library Usage
 

@@ -86,7 +86,6 @@ Supported config keys:
 - `securitySchemes`: serializable HTTP, API key, OAuth2, or OpenID Connect schemes.
 - `metadataHook`: optional advanced Go hook.
 - `entryConfig`: optional `loader` and `path` for config-taking entries.
-- `autoAdd`: deprecated; the CLI no longer needs to add OpenAPI to the user module.
 
 CLI flags override config values. Config values override defaults.
 Security schemes are validated during config loading so missing required fields
