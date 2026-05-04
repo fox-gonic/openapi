@@ -39,6 +39,27 @@ func TestInitConfigWritesDefaultConfigWithModuleEntry(t *testing.T) {
 	}
 }
 
+func TestInitConfigNormalizesEntryInDirectSubpackage(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.25\n")
+
+	err := InitConfig(InitOptions{
+		Workdir: dir,
+		Entry:   "server.NewEngine",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "fox-openapi.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `entry: "example.com/app/server.NewEngine"`+"\n") {
+		t.Fatalf("unexpected config:\n%s", data)
+	}
+}
+
 func TestInitConfigRefusesExistingConfigUnlessForced(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.25\n")

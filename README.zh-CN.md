@@ -59,7 +59,7 @@ fox-openapi generate \
   --title "Acme API"
 ```
 
-CLI 会构建一个隔离的临时 driver，因此业务模块不需要 `tools.go` 文件，也不需要直接声明 `github.com/fox-gonic/openapi` 依赖，除非使用 OpenAPI metadata hook。
+CLI 会构建一个隔离的临时 driver。基础生成场景下，业务模块不需要 `tools.go` 文件，也不需要提交直接的 `github.com/fox-gonic/openapi` 依赖；driver 构建会解析这个临时依赖，并在结束后恢复 `go.mod` / `go.sum`。只有业务代码自己 import OpenAPI metadata hook 或 library API 时，才需要直接声明依赖。
 
 ## Entry 函数
 

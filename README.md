@@ -65,9 +65,12 @@ fox-openapi generate \
   --title "Acme API"
 ```
 
-The CLI builds an isolated temporary driver, so the application module does not
-need a `tools.go` file or a direct `github.com/fox-gonic/openapi` requirement
-unless it uses OpenAPI metadata hooks.
+The CLI builds an isolated temporary driver. For basic generation, the
+application module does not need a `tools.go` file or a committed direct
+`github.com/fox-gonic/openapi` requirement; the driver build resolves that
+temporary dependency and restores `go.mod`/`go.sum` afterward. Add a direct
+requirement only when application code imports OpenAPI metadata hooks or
+library APIs.
 
 ## Entry Functions
 

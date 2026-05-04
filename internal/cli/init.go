@@ -74,6 +74,9 @@ func normalizeInitEntry(workdir, entry string) (string, error) {
 	if entry == modulePath || strings.HasPrefix(entry, modulePath+"/") || strings.HasPrefix(entry, modulePath+".") {
 		return entry, nil
 	}
+	if !strings.Contains(entry, "/") && strings.Contains(entry, ".") {
+		return modulePath + "/" + entry, nil
+	}
 	if strings.Contains(entry, "/") {
 		return modulePath + "/" + entry, nil
 	}
