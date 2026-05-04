@@ -1,4 +1,4 @@
-module github.com/fox-gonic/openapi/examples/08-openapi
+module github.com/fox-gonic/openapi/examples/openapi-mounted
 
 go 1.25.0
 

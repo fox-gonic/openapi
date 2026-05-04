@@ -1,10 +1,39 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/fox-gonic/openapi/internal/cli"
 )
+
+func parseCommon(name string, args []string) (cli.Config, int) {
+	opts := newCommonOptions()
+	cmd := &cobra.Command{
+		Use:           name,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return nil
+		},
+	}
+	bindCommonFlags(cmd.Flags(), opts)
+	cmd.SetArgs(args)
+	if err := cmd.Execute(); err != nil {
+		return cli.Config{}, cli.ExitUsage
+	}
+	markOverridesFromFlags(opts, cmd.Flags())
+	cfg, err := configFromOptions(opts)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return cli.Config{}, cli.ExitUsage
+	}
+	return cfg, 0
+}
 
 func TestParseCommonHonorsWorkdirAndConfigFlags(t *testing.T) {
 	dir := t.TempDir()
@@ -32,5 +61,53 @@ func TestParseCommonHonorsWorkdirAndConfigFlags(t *testing.T) {
 	}
 	if cfg.Entry != "example.com/app.Custom" {
 		t.Fatalf("custom config entry = %q", cfg.Entry)
+	}
+}
+
+func TestParseCommonHonorsInfoAndServerFlags(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/app\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, code := parseCommon("generate", []string{
+		"--workdir", dir,
+		"--entry", "example.com/app.NewEngine",
+		"--title", "AoneSuite Infra API",
+		"--version", "2.0.0",
+		"--server", "https://api.example.com",
+	})
+	if code != 0 {
+		t.Fatalf("parseCommon code = %d", code)
+	}
+	if cfg.Info.Title != "AoneSuite Infra API" || cfg.Info.Version != "2.0.0" {
+		t.Fatalf("info = %+v", cfg.Info)
+	}
+	if len(cfg.Servers) != 1 || cfg.Servers[0].URL != "https://api.example.com" {
+		t.Fatalf("servers = %#v", cfg.Servers)
+	}
+}
+
+func TestRunSubcommandHelpSucceeds(t *testing.T) {
+	if code := run([]string{"generate", "--help"}); code != 0 {
+		t.Fatalf("run generate --help code = %d, want 0", code)
+	}
+}
+
+func TestRunInitWritesConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/app\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code := run([]string{"init", "--workdir", dir, "--entry", "internal/server.NewEngine", "--title", "Acme API"})
+	if code != 0 {
+		t.Fatalf("run init code = %d, want 0", code)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "fox-openapi.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) == "" {
+		t.Fatal("expected generated config")
 	}
 }

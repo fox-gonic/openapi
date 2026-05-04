@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"go/types"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -12,11 +13,19 @@ type Entry struct {
 	ImportPath   string
 	FuncName     string
 	ReturnsError bool
+	TakesContext bool
+	TakesConfig  bool
 }
 
 type Hook struct {
 	ImportPath string
 	FuncName   string
+}
+
+type ConfigLoader struct {
+	ImportPath string
+	FuncName   string
+	Path       string
 }
 
 func ResolveEntry(workdir, value string) (Entry, error) {
@@ -32,17 +41,52 @@ func ResolveEntry(workdir, value string) (Entry, error) {
 		return Entry{}, fmt.Errorf("entry function %s is not exported", value)
 	}
 	sig := obj.Type().(*types.Signature)
-	if sig.Params().Len() != 0 {
+	paramCount := sig.Params().Len()
+	if paramCount > 2 {
 		return Entry{}, entrySignatureError(value)
+	}
+	takesContext := false
+	takesConfig := false
+	if paramCount >= 1 {
+		if !isContextType(sig.Params().At(0).Type()) {
+			return Entry{}, entrySignatureError(value)
+		}
+		takesContext = true
+	}
+	if paramCount == 2 {
+		takesConfig = true
 	}
 	results := sig.Results()
 	if results.Len() == 1 && isFoxEngine(results.At(0).Type()) {
-		return Entry{ImportPath: importPath, FuncName: funcName}, nil
+		return Entry{ImportPath: importPath, FuncName: funcName, TakesContext: takesContext, TakesConfig: takesConfig}, nil
 	}
 	if results.Len() == 2 && isFoxEngine(results.At(0).Type()) && isErrorType(results.At(1).Type()) {
-		return Entry{ImportPath: importPath, FuncName: funcName, ReturnsError: true}, nil
+		return Entry{ImportPath: importPath, FuncName: funcName, ReturnsError: true, TakesContext: takesContext, TakesConfig: takesConfig}, nil
 	}
 	return Entry{}, entrySignatureError(value)
+}
+
+func ResolveConfigLoader(workdir, value, path string) (ConfigLoader, error) {
+	importPath, funcName, err := splitSymbol(value)
+	if err != nil {
+		return ConfigLoader{}, err
+	}
+	obj, err := loadFunc(workdir, importPath, funcName)
+	if err != nil {
+		return ConfigLoader{}, err
+	}
+	if !obj.Exported() {
+		return ConfigLoader{}, fmt.Errorf("entry config loader function %s is not exported", value)
+	}
+	sig := obj.Type().(*types.Signature)
+	if sig.Params().Len() != 1 || !isStringType(sig.Params().At(0).Type()) ||
+		sig.Results().Len() != 2 || !isErrorType(sig.Results().At(1).Type()) {
+		return ConfigLoader{}, fmt.Errorf("entry config loader signature mismatch for %s: expected func(string) (*Config, error)", value)
+	}
+	if path != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(workdir, path)
+	}
+	return ConfigLoader{ImportPath: importPath, FuncName: funcName, Path: path}, nil
 }
 
 func ResolveHook(workdir, value string) (Hook, error) {
@@ -108,6 +152,20 @@ func isFoxEngine(typ types.Type) bool {
 	return pkg != nil && (pkg.Path() == "github.com/fox-gonic/fox" || pkg.Name() == "fox")
 }
 
+func isContextType(typ types.Type) bool {
+	named, ok := typ.(*types.Named)
+	if !ok || named.Obj() == nil || named.Obj().Name() != "Context" {
+		return false
+	}
+	pkg := named.Obj().Pkg()
+	return pkg != nil && pkg.Path() == "context"
+}
+
+func isStringType(typ types.Type) bool {
+	basic, ok := typ.(*types.Basic)
+	return ok && basic.Kind() == types.String
+}
+
 func isOpenAPIOptionSlice(typ types.Type) bool {
 	slice, ok := typ.(*types.Slice)
 	if !ok {
@@ -127,5 +185,5 @@ func isErrorType(typ types.Type) bool {
 }
 
 func entrySignatureError(value string) error {
-	return fmt.Errorf("entry function signature mismatch for %s: expected func() *fox.Engine or func() (*fox.Engine, error)", value)
+	return fmt.Errorf("entry function signature mismatch for %s: expected func() *fox.Engine, func() (*fox.Engine, error), func(context.Context) *fox.Engine, func(context.Context) (*fox.Engine, error), func(context.Context, *Config) *fox.Engine, or func(context.Context, *Config) (*fox.Engine, error)", value)
 }

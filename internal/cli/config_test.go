@@ -19,7 +19,6 @@ info:
   title: From Config
   version: 1.2.3
 metadataHook: example.com/app/internal/server.ConfigureOpenAPI
-autoAdd: true
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -35,8 +34,6 @@ autoAdd: true
 		EntrySet:            true,
 		MetadataHook:        "",
 		MetadataHookSet:     true,
-		AutoAdd:             false,
-		AutoAddSet:          true,
 		IncludeTestFiles:    true,
 		IncludeTestFilesSet: true,
 	})
@@ -53,8 +50,8 @@ autoAdd: true
 	if cfg.Info.Title != "From Config" || cfg.Info.Version != "1.2.3" {
 		t.Fatalf("config info not preserved: %+v", cfg.Info)
 	}
-	if cfg.MetadataHook != "" || cfg.AutoAdd {
-		t.Fatalf("metadataHook/autoAdd overrides not applied: hook=%q autoAdd=%v", cfg.MetadataHook, cfg.AutoAdd)
+	if cfg.MetadataHook != "" {
+		t.Fatalf("metadataHook override not applied: hook=%q", cfg.MetadataHook)
 	}
 	if !cfg.IncludeTestFiles {
 		t.Fatal("includeTestFiles override not applied")
@@ -94,5 +91,24 @@ func TestLoadConfigInvalidFormat(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected invalid format error")
+	}
+}
+
+func TestLoadConfigRejectsInvalidSecurityScheme(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "fox-openapi.yaml")
+	if err := os.WriteFile(configPath, []byte(`
+entry: example.com/app.NewEngine
+securitySchemes:
+  Broken:
+    type: apiKey
+    name: X-API-Key
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadConfig(Overrides{ConfigPath: configPath, ConfigExplicit: true})
+	if err == nil {
+		t.Fatal("expected invalid security scheme error")
 	}
 }

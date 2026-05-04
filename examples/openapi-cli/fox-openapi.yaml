@@ -1,4 +1,4 @@
-entry: github.com/fox-gonic/openapi/examples/09-openapi-cli/internal/server.NewEngine
+entry: github.com/fox-gonic/openapi/examples/openapi-cli/internal/server.NewEngine
 out: api/openapi.yaml
 format: yaml
 sources:

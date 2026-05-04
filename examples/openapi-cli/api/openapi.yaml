@@ -66,7 +66,7 @@ paths:
         List users.
         
         Returns users with simple page-based pagination.
-      operationId: github_com_fox_gonic_openapi_examples_09_openapi_cli_internal_server_listUsers
+      operationId: github_com_fox_gonic_openapi_examples_openapi_cli_internal_server_listUsers
       parameters:
       - in: query
         name: page
@@ -96,7 +96,7 @@ paths:
         Create user.
         
         Creates a user from the JSON request body.
-      operationId: github_com_fox_gonic_openapi_examples_09_openapi_cli_internal_server_createUser
+      operationId: github_com_fox_gonic_openapi_examples_openapi_cli_internal_server_createUser
       requestBody:
         content:
           application/json:
@@ -132,7 +132,7 @@ paths:
         Get user.
         
         Returns one user by ID.
-      operationId: github_com_fox_gonic_openapi_examples_09_openapi_cli_internal_server_getUser
+      operationId: github_com_fox_gonic_openapi_examples_openapi_cli_internal_server_getUser
       parameters:
       - in: path
         name: id

@@ -258,6 +258,18 @@ func TestRegenerateRefreshesPathsAfterNewRoutes(t *testing.T) {
 	require.Contains(t, paths, "/users")
 }
 
+func TestRegenerateDoesNotRetainPreviousWarnings(t *testing.T) {
+	engine := fox.New()
+	engine.GET("/users/:id", getMismatchedURI)
+
+	g := openapi.New(engine, openapi.Info("Fox Test API", "1.0.0"))
+	require.Len(t, g.Warnings(), 1)
+
+	g.Regenerate()
+
+	require.Len(t, g.Warnings(), 1)
+}
+
 func TestMountRegistersGeneratedSpecHandlers(t *testing.T) {
 	engine := fox.New()
 	engine.GET("/users/:id", getUser)

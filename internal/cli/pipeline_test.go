@@ -51,13 +51,75 @@ func TestRunPipelineGeneratesSpecFromUserModule(t *testing.T) {
 	}
 }
 
-func TestEnsureOpenAPIModuleRequiresGoModEntry(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/app\n\ngo 1.25\n"), 0o644); err != nil {
+func TestRunPipelineDoesNotRequireOpenAPIModuleInUserGoMod(t *testing.T) {
+	dir := writeUserModuleWithoutOpenAPIRequire(t)
+	before, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	err := EnsureOpenAPIModule(Config{Workdir: dir})
-	if err == nil || !strings.Contains(err.Error(), "go get github.com/fox-gonic/openapi") {
-		t.Fatalf("expected go get hint, got %v", err)
+
+	cfg := Config{
+		Entry:   "example.com/app/internal/server.NewEngine",
+		Out:     "api/openapi.yaml",
+		Format:  "yaml",
+		Sources: []string{"./internal/server"},
+		Info:    InfoConfig{Title: "Example API", Version: "1.0.0"},
+		Workdir: dir,
+	}
+	data, _, err := RunPipeline(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte("/users/{id}:")) {
+		t.Fatalf("generated spec missing route:\n%s", data)
+	}
+	after, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("go.mod changed:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestRunPipelineSupportsContextAndConfigEntry(t *testing.T) {
+	dir := writeUserModule(t)
+	cfg := Config{
+		Entry:   "example.com/app/internal/server.NewEngineWithConfig",
+		Out:     "api/openapi.yaml",
+		Format:  "yaml",
+		Sources: []string{"./internal/server"},
+		Info:    InfoConfig{Title: "Example API", Version: "1.0.0"},
+		EntryConfig: EntryConfig{
+			Loader: "example.com/app/internal/config.Load",
+			Path:   "config.yaml",
+		},
+		Workdir: dir,
+	}
+	data, _, err := RunPipeline(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte("/users/{id}:")) {
+		t.Fatalf("generated spec missing route:\n%s", data)
+	}
+}
+
+func TestRunPipelineSupportsContextAndNilConfigEntry(t *testing.T) {
+	dir := writeUserModule(t)
+	cfg := Config{
+		Entry:   "example.com/app/internal/server.NewEngineWithConfig",
+		Out:     "api/openapi.yaml",
+		Format:  "yaml",
+		Sources: []string{"./internal/server"},
+		Info:    InfoConfig{Title: "Example API", Version: "1.0.0"},
+		Workdir: dir,
+	}
+	data, _, err := RunPipeline(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte("/users/{id}:")) {
+		t.Fatalf("generated spec missing route:\n%s", data)
 	}
 }

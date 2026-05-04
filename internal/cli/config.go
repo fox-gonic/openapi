@@ -15,6 +15,13 @@ const (
 	defaultOutPath    = "api/openapi.yaml"
 )
 
+const (
+	// FormatYAML emits the spec as YAML.
+	FormatYAML = "yaml"
+	// FormatJSON emits the spec as JSON.
+	FormatJSON = "json"
+)
+
 type Config struct {
 	ConfigPath       string
 	ConfigExplicit   bool
@@ -28,7 +35,7 @@ type Config struct {
 	Tags             []TagConfig       `yaml:"tags"`
 	SecuritySchemes  map[string]Scheme `yaml:"securitySchemes"`
 	MetadataHook     string            `yaml:"metadataHook"`
-	AutoAdd          bool              `yaml:"autoAdd"`
+	EntryConfig      EntryConfig       `yaml:"entryConfig"`
 	Workdir          string            `yaml:"workdir"`
 	KeepDriver       bool              `yaml:"keepDriver"`
 	Verbose          bool              `yaml:"verbose"`
@@ -54,6 +61,11 @@ type TagConfig struct {
 	Name         string              `yaml:"name"`
 	Description  string              `yaml:"description"`
 	ExternalDocs *ExternalDocsConfig `yaml:"externalDocs"`
+}
+
+type EntryConfig struct {
+	Loader string `yaml:"loader"`
+	Path   string `yaml:"path"`
 }
 
 type Scheme struct {
@@ -82,28 +94,36 @@ type OAuthFlow struct {
 }
 
 type Overrides struct {
-	ConfigPath          string
-	ConfigExplicit      bool
-	Entry               string
-	EntrySet            bool
-	Out                 string
-	OutSet              bool
-	Format              string
-	FormatSet           bool
-	Sources             []string
-	SourcesSet          bool
-	IncludeTestFiles    bool
-	IncludeTestFilesSet bool
-	MetadataHook        string
-	MetadataHookSet     bool
-	AutoAdd             bool
-	AutoAddSet          bool
-	Workdir             string
-	WorkdirSet          bool
-	KeepDriver          bool
-	KeepDriverSet       bool
-	Verbose             bool
-	VerboseSet          bool
+	ConfigPath           string
+	ConfigExplicit       bool
+	Entry                string
+	EntrySet             bool
+	Out                  string
+	OutSet               bool
+	Format               string
+	FormatSet            bool
+	InfoTitle            string
+	InfoTitleSet         bool
+	InfoVersion          string
+	InfoVersionSet       bool
+	Servers              []string
+	ServersSet           bool
+	Sources              []string
+	SourcesSet           bool
+	IncludeTestFiles     bool
+	IncludeTestFilesSet  bool
+	MetadataHook         string
+	MetadataHookSet      bool
+	EntryConfigLoader    string
+	EntryConfigLoaderSet bool
+	EntryConfigPath      string
+	EntryConfigPathSet   bool
+	Workdir              string
+	WorkdirSet           bool
+	KeepDriver           bool
+	KeepDriverSet        bool
+	Verbose              bool
+	VerboseSet           bool
 }
 
 func LoadConfig(overrides Overrides) (Config, error) {
@@ -141,13 +161,55 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		cfg.Format = inferFormat(cfg.Out)
 	}
 	cfg.Format = strings.ToLower(cfg.Format)
-	if cfg.Format != "yaml" && cfg.Format != "json" {
+	if cfg.Format != FormatYAML && cfg.Format != FormatJSON {
 		return Config{}, fmt.Errorf("format must be yaml or json, got %q", cfg.Format)
 	}
 	if cfg.Entry == "" {
 		return Config{}, errors.New("entry is required")
 	}
+	if err := validateSecuritySchemes(cfg.SecuritySchemes); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+func validateSecuritySchemes(schemes map[string]Scheme) error {
+	for name, scheme := range schemes {
+		if name == "" {
+			return errors.New("security scheme name is required")
+		}
+		switch scheme.Type {
+		case "apiKey":
+			if scheme.Name == "" {
+				return fmt.Errorf("security scheme %q: name is required for apiKey", name)
+			}
+			if scheme.In != "query" && scheme.In != "header" && scheme.In != "cookie" {
+				return fmt.Errorf("security scheme %q: in must be query, header, or cookie for apiKey", name)
+			}
+		case "http":
+			if scheme.Scheme == "" {
+				return fmt.Errorf("security scheme %q: scheme is required for http", name)
+			}
+		case "oauth2":
+			if scheme.Flows == nil || !hasOAuthFlow(scheme.Flows) {
+				return fmt.Errorf("security scheme %q: at least one OAuth2 flow is required", name)
+			}
+		case "openIdConnect":
+			if scheme.OpenIDConnectURL == "" {
+				return fmt.Errorf("security scheme %q: openIdConnectUrl is required for openIdConnect", name)
+			}
+		default:
+			return fmt.Errorf("security scheme %q: type must be apiKey, http, oauth2, or openIdConnect", name)
+		}
+	}
+	return nil
+}
+
+func hasOAuthFlow(flows *OAuthFlows) bool {
+	return flows.Implicit != nil ||
+		flows.Password != nil ||
+		flows.ClientCredentials != nil ||
+		flows.AuthorizationCode != nil
 }
 
 func loadConfigFile(cfg *Config) error {
@@ -174,6 +236,20 @@ func applyOverrides(cfg *Config, o Overrides) {
 	if o.FormatSet {
 		cfg.Format = o.Format
 	}
+	if o.InfoTitleSet {
+		cfg.Info.Title = o.InfoTitle
+	}
+	if o.InfoVersionSet {
+		cfg.Info.Version = o.InfoVersion
+	}
+	if o.ServersSet {
+		cfg.Servers = make([]ServerConfig, 0, len(o.Servers))
+		for _, url := range o.Servers {
+			if url != "" {
+				cfg.Servers = append(cfg.Servers, ServerConfig{URL: url})
+			}
+		}
+	}
 	if o.SourcesSet {
 		cfg.Sources = append([]string(nil), o.Sources...)
 	}
@@ -183,8 +259,11 @@ func applyOverrides(cfg *Config, o Overrides) {
 	if o.MetadataHookSet {
 		cfg.MetadataHook = o.MetadataHook
 	}
-	if o.AutoAddSet {
-		cfg.AutoAdd = o.AutoAdd
+	if o.EntryConfigLoaderSet {
+		cfg.EntryConfig.Loader = o.EntryConfigLoader
+	}
+	if o.EntryConfigPathSet {
+		cfg.EntryConfig.Path = o.EntryConfigPath
 	}
 	if o.WorkdirSet {
 		cfg.Workdir = o.Workdir
@@ -199,7 +278,7 @@ func applyOverrides(cfg *Config, o Overrides) {
 
 func inferFormat(out string) string {
 	if strings.EqualFold(filepath.Ext(out), ".json") {
-		return "json"
+		return FormatJSON
 	}
-	return "yaml"
+	return FormatYAML
 }

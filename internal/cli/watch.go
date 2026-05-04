@@ -64,9 +64,7 @@ func watchDirs(cfg Config) []string {
 		if path == "" {
 			return
 		}
-		if strings.HasSuffix(path, "/...") {
-			path = strings.TrimSuffix(path, "/...")
-		}
+		path = strings.TrimSuffix(path, "/...")
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(cfg.Workdir, path)
 		}

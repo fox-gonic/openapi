@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/fox-gonic/openapi/examples/09-openapi-cli/internal/server"
+	"github.com/fox-gonic/openapi/examples/openapi-cli/internal/server"
 )
 
 func main() {
