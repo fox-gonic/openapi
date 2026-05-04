@@ -1,5 +1,7 @@
 # Fox OpenAPI
 
+English | [简体中文](README.zh-CN.md)
+
 OpenAPI 3.0.3 generator and CLI for [Fox](https://github.com/fox-gonic/fox).
 
 The recommended workflow is `fox-openapi`: expose a function that builds a
