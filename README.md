@@ -44,5 +44,19 @@ fox-openapi serve --addr 127.0.0.1:8765
 `serve` exposes `/openapi.yaml`, `/openapi.json`, `/docs`, `/scalar`, and
 `/redoc` with embedded offline UI assets.
 
+For small projects you can skip the config file and pass the same settings as
+flags:
+
+```bash
+fox-openapi generate \
+  --entry github.com/acme/myapp/internal/server.NewEngine \
+  --out api/openapi.yaml \
+  --title "Acme API"
+```
+
+The CLI builds an isolated temporary driver, so the application module does not
+need a `tools.go` file or a direct `github.com/fox-gonic/openapi` requirement
+unless it uses OpenAPI metadata hooks.
+
 See [cmd/fox-openapi/README.md](cmd/fox-openapi/README.md) for CLI details and
 [docs/openapi.md](docs/openapi.md) for library usage.

@@ -40,6 +40,22 @@ func NewEngine() *fox.Engine {
 }
 ```
 
+Entries may also accept `context.Context`, and may accept one config pointer as
+their second argument:
+
+```go
+func NewEngine(ctx context.Context, cfg *config.Config) (*fox.Engine, error) {
+	if cfg == nil {
+		return newRouteOnlyEngine(), nil
+	}
+	return newProductionEngine(ctx, cfg)
+}
+```
+
+When no config loader is provided, the CLI passes `nil` for the config
+argument. This lets production code share one route registration entry with
+OpenAPI generation without initializing databases or external providers.
+
 Create `fox-openapi.yaml` in the application root:
 
 ```yaml
@@ -52,6 +68,24 @@ info:
   version: 1.0.0
 servers:
   - url: https://api.example.com
+```
+
+For a config-taking entry, optionally load a real config:
+
+```yaml
+entry: github.com/acme/myapp/internal/server.NewEngine
+entryConfig:
+  loader: github.com/acme/myapp/internal/config.Load
+  path: config.yaml
+```
+
+For small setups, skip the YAML file and pass flags:
+
+```bash
+fox-openapi generate \
+  --entry github.com/acme/myapp/internal/server.NewEngine \
+  --out api/openapi.yaml \
+  --title "Acme API"
 ```
 
 Generate and verify the committed spec:

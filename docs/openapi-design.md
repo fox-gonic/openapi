@@ -259,6 +259,7 @@ exit code: 4
 | `fox-openapi generate` | 生成 spec 并写到 `--out` |
 | `fox-openapi check` | 生成到临时文件并 diff `--out`；不一致时退出码 4 |
 | `fox-openapi serve` | 本地起 HTTP 服务，预览 spec 与内嵌 UI（Swagger UI / Scalar / Redoc）；支持文件变化自动重新生成 |
+| `fox-openapi init` | 生成初始 `fox-openapi.yaml` |
 | `fox-openapi version` | 打印版本与 commit |
 
 ### 3.3 全局 flags
@@ -266,13 +267,15 @@ exit code: 4
 | flag | 默认值 | 说明 |
 |---|---|---|
 | `--config` | `./fox-openapi.yaml` | 配置文件路径，不存在不报错 |
-| `--entry` | （无） | 形如 `module/path/pkg.FuncName`；必须导出且签名为 `func() *fox.Engine` 或 `func() (*fox.Engine, error)` |
+| `--entry` | （无） | 形如 `module/path/pkg.FuncName`；必须导出且返回 `*fox.Engine`，可接受 `context.Context` 和一个 config 指针 |
 | `--out` | `api/openapi.yaml` | 产物路径 |
 | `--format` | 由 `--out` 后缀推断 | `yaml` 或 `json` |
+| `--title` / `--version` | `Fox API` / `0.0.0` | OpenAPI info 元数据 |
+| `--server` | （无，可重复） | OpenAPI server URL |
 | `--source` | `./...`（可重复） | 传给 library `Source()` 的路径列表 |
 | `--include-test-files` | `false` | 透传 `IncludeTestFiles()` |
 | `--metadata-hook` | （无） | 形如 `module/path/pkg.FuncName`；可选；签名必须为 `func() []openapi.Option`。详见 §1.3 |
-| `--auto-add` | `false` | 用户 `go.mod` 缺少 `fox-openapi` require 时，自动执行 `go get github.com/fox-gonic/openapi@<cliVersion>`。会修改用户 `go.mod` / `go.sum`，需明确开启 |
+| `--entry-config-loader` / `--entry-config-path` | （无） | 为 config-taking entry 提供 `func(string) (*Config, error)` loader 与配置路径 |
 | `--workdir` | 当前目录 | 用户项目根目录（含 `go.mod`） |
 | `--keep-driver` | `false` | 保留临时 driver 目录用于排查 |
 | `--verbose` | `false` | 打印执行细节 |
@@ -438,12 +441,7 @@ runCmd.Dir = buildCmd.Dir
 2. 不需要复制和重写 `replace` 指令、不需要处理相对路径 rebase、不需要担心 `go.work` 不可见——这些复杂性全部消失。
 3. driver 加上 `// +build ignore` 或文件名带 `_driver`？不需要——`.fox-openapi/` 加进 `.gitignore` 即可，不会被 `go build ./...` 选中（它在隐藏目录下不会被通配命中）；如果用户显式 `go build ./.fox-openapi/...` 也只是把 driver 编译一次，无副作用。
 
-**对用户 module 的唯一要求**：用户 `go.mod` 必须 `require github.com/fox-gonic/openapi`，否则 driver 编不过。
-
-CLI 第一次运行时检查：
-
-- 若 `go list -m github.com/fox-gonic/openapi` 返回非空 → ok
-- 否则提示用户运行 `go get github.com/fox-gonic/openapi@<cliVersion>`，或加 `--auto-add` 让 CLI 自动跑这条命令（修改用户 go.mod / go.sum，需要明确同意）
+**对用户 module 的要求**：用户 module 不需要 `require github.com/fox-gonic/openapi`。driver 在用户 module 内临时构建，借助 `go build -mod=mod` 解析 CLI 依赖，并在结束后恢复用户 `go.mod` / `go.sum`。只有用户显式使用 metadata hook 或直接引用 OpenAPI 类型时，业务 module 才需要自己的 OpenAPI 依赖。
 
 **Source 路径处理**：driver 渲染时把 `--source` 路径转成相对 `cmd.Dir` 的绝对路径（或保留用户原样并由 driver 内 `os.Chdir` 切回 `workdir`）。推荐**用绝对路径**，避免 chdir 引入隐式状态。
 
@@ -467,6 +465,9 @@ CLI 第一次运行时检查：
 4. 检查签名：
    - `func() *fox.Engine` ✓
    - `func() (*fox.Engine, error)` ✓
+   - `func(context.Context) *fox.Engine` ✓
+   - `func(context.Context) (*fox.Engine, error)` ✓
+   - `func(context.Context, *Config) (*fox.Engine, error)` ✓
    - 其他 → 报错退出 1
 5. 输出 `EntryImportPath` / `EntryFuncName` / `EntryReturnsError` 给 driver 模板
 
@@ -837,17 +838,17 @@ components:
 - **交付**：`internal/cli/resolve.go`，使用 `golang.org/x/tools/go/packages`
 - **验收**：单测覆盖合法 entry / 不存在的包 / 不存在的函数 / 函数签名不匹配 / 函数未导出；错误信息能告诉用户具体哪一步失败、期望签名是什么
 
-### TODO 4：Driver 模板与依赖检测
+### TODO 4：Driver 模板与临时依赖解析
 
 - **目标**：能在任意用户 module 内生成可编译的 driver
 - **交付**：
   - `internal/cli/templates/driver.go.tmpl`
   - `internal/cli/driver.go` 渲染逻辑（写到 `<workdir>/.fox-openapi/driver/main.go`）
-  - `internal/cli/modcheck.go` 用 `x/mod/modfile` 解析 `<workdir>/go.mod`，确认 `github.com/fox-gonic/openapi` 已被 require；缺失时给出明确错误（"run `go get github.com/fox-gonic/openapi`"），`--auto-add` 时自行执行
+  - driver 构建前 snapshot 用户 `go.mod` / `go.sum`，构建后恢复，避免工具依赖污染业务 module
 - **验收**：
   - `entry` 指向 `internal/server.NewEngine` 这种 `internal/` 路径的 fixture 上能成功生成（这是关键验收：driver 必须能 import `internal/...`）
   - 用户 `go.mod` 含 `replace` 指令时无需任何额外处理仍可生成
-  - 用户未 require fox-openapi 时退出 1 并提示
+  - 用户未 require fox-openapi 时仍可生成，且 `go.mod` / `go.sum` 不被改写
   - `--keep-driver` 后手动 `cd .fox-openapi/driver && go build .` 也能成功
 
 ### TODO 5：Driver 执行与 stderr/stdout 分离
@@ -1028,12 +1029,12 @@ openapi.Mount(router, spec)
 | 错误 | 含义 | 解决 |
 |---|---|---|
 | `entry function not found: pkg.Func` | resolver 找不到 | 检查 import path 是否在 go.mod 里、函数是否导出 |
-| `entry function signature mismatch` | 签名不允许 | 改成 `func() *fox.Engine` 或 `func() (*fox.Engine, error)` |
+| `entry function signature mismatch` | 签名不允许 | 改成支持的 entry 签名：无参、`context.Context`，或 `context.Context` + config 指针 |
 | `driver build failed` (退出 2) | 用户代码编译错 | 先 `go build ./...` 修复 |
 | `entry returned error` (退出 3) | entry 返回 non-nil error | 看 stderr cause |
 | `out of date` (退出 4) | check 模式 spec 不一致 | 跑 `fox-openapi generate` 提交 |
-| `user module must require github.com/fox-gonic/openapi` | driver 需要在用户 module 中 import library | 运行 `go get github.com/fox-gonic/openapi`，或传 `--auto-add` |
-| `missing go.sum entry` | 用户 module 虽然 require 了 fox-openapi，但缺少 transitive checksum | 在用户 module 里运行 `go get github.com/getkin/kin-openapi/openapi3@<version>` 或 `go mod tidy` 后重跑 |
+| `entry config loader signature mismatch` | config loader 签名不允许 | 改成 `func(string) (*Config, error)` |
+| `missing go.sum entry` | 用户 module 或 driver 临时构建缺少 checksum | 在用户 module 里运行 `go mod tidy` 后重跑 |
 | 输出文件混入日志 | entry 阶段用户代码直接写 stdout | 将用户日志改到 stderr，或从 entry 中移除副作用 |
 | serve 修改源码后没刷新 | watcher 未覆盖路径，或编译失败保留上一份 spec | 检查 `sources` 配置，并查看 CLI stderr |
 

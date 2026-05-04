@@ -92,6 +92,34 @@ CLI flags override config values. Config values override defaults.
 Security schemes are validated during config loading so missing required fields
 fail before a generated driver is built.
 
+For thin configs, use flags instead of a YAML file:
+
+```bash
+fox-openapi generate \
+  --entry github.com/acme/myapp/internal/server.NewEngine \
+  --out api/openapi.yaml \
+  --title "Acme API" \
+  --version 1.0.0 \
+  --server https://api.example.com
+```
+
+`generate`, `check`, and `serve` share the common config flags:
+
+- `--config`: config file path, default `fox-openapi.yaml`.
+- `--entry`: entry function.
+- `--out`: output path, default `api/openapi.yaml`.
+- `--format`: `yaml` or `json`.
+- `--title` and `--version`: OpenAPI info metadata.
+- `--server`: repeatable OpenAPI server URL.
+- `--source`: repeatable Go source path for comment extraction.
+- `--include-test-files`: include `_test.go` files while scanning comments.
+- `--metadata-hook`: optional `func() []openapi.Option`.
+- `--entry-config-loader` and `--entry-config-path`: command-line form of `entryConfig`.
+- `--workdir`: user project root.
+- `--keep-driver`: keep the generated temporary driver for debugging.
+
+`serve` also supports `--addr`, repeatable `--ui`, `--watch`, and `--open`.
+
 ## Metadata Hook
 
 For metadata that needs Go values, add a small optional hook:
@@ -123,7 +151,9 @@ fox-openapi version
 
 `init` creates `fox-openapi.yaml`. Relative entries such as
 `internal/server.NewEngine` are expanded with the module path from `go.mod`.
-Pass `--force` to overwrite an existing config file.
+Pass `--force` to overwrite an existing config file. `init` supports
+`--config`, `--entry`, `--out`, `--title`, `--version`, `--workdir`, and
+`--force`.
 
 `serve` exposes `/openapi.yaml`, `/openapi.json`, `/docs`, `/scalar`, and `/redoc`. UI pages are embedded and do not load CDN assets.
 
