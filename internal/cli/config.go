@@ -39,6 +39,21 @@ type Config struct {
 	Workdir          string            `yaml:"workdir"`
 	KeepDriver       bool              `yaml:"keepDriver"`
 	Verbose          bool              `yaml:"verbose"`
+	// EntryAutoDiscovered is true when the entry was filled in by
+	// DiscoverEntry rather than the config file or CLI flags. CLI commands
+	// use this to surface "entry: ..." back to the user so the auto-pick is
+	// never invisible.
+	EntryAutoDiscovered bool `yaml:"-"`
+	// EntryDiscoveryScope narrows where DiscoverEntry looks for an entry
+	// function. Filled in by the CLI from the optional positional path
+	// argument. It does NOT affect Sources (comment extraction), which is
+	// kept module-wide so descriptions on referenced types are not lost
+	// when the entry lives in a sub-tree.
+	EntryDiscoveryScope []string `yaml:"-"`
+	// ResolvedEntry caches the *Entry produced by DiscoverEntry so the
+	// pipeline can skip a second packages.Load on the auto-discovery path.
+	// nil when the entry was set explicitly and still needs ResolveEntry.
+	ResolvedEntry *Entry `yaml:"-"`
 }
 
 type InfoConfig struct {
@@ -124,39 +139,74 @@ type Overrides struct {
 	KeepDriverSet        bool
 	Verbose              bool
 	VerboseSet           bool
+	// EntryDiscoveryScope is set by the CLI from the optional positional
+	// path argument. It limits where DiscoverEntry searches but does not
+	// affect Sources (comment extraction).
+	EntryDiscoveryScope    []string
+	EntryDiscoveryScopeSet bool
 }
 
 func LoadConfig(overrides Overrides) (Config, error) {
+	// Resolve CWD up front: CLI flags and the default config-file lookup
+	// resolve against this. Everything that comes from the YAML resolves
+	// against the YAML file's directory instead, mirroring how tsconfig /
+	// jest.config / pyproject treat their own relative paths.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return Config{}, fmt.Errorf("get working directory: %w", err)
+	}
+
 	cfg := Config{
-		ConfigPath:      defaultConfigPath,
-		Out:             defaultOutPath,
 		Sources:         []string{"./..."},
 		Info:            InfoConfig{Title: "Fox API", Version: "0.0.0"},
 		SecuritySchemes: map[string]Scheme{},
-		Workdir:         ".",
+		Workdir:         cwd,
 	}
+
+	// Resolve --config relative to CWD (not workdir).
+	configPath := defaultConfigPath
 	if overrides.ConfigPath != "" {
-		cfg.ConfigPath = overrides.ConfigPath
+		configPath = overrides.ConfigPath
 	}
-	if overrides.WorkdirSet {
-		cfg.Workdir = overrides.Workdir
+	if !filepath.IsAbs(configPath) {
+		configPath = filepath.Join(cwd, configPath)
 	}
-	if !filepath.IsAbs(cfg.ConfigPath) && cfg.Workdir != "" {
-		cfg.ConfigPath = filepath.Join(cfg.Workdir, cfg.ConfigPath)
-	}
+	cfg.ConfigPath = configPath
 	cfg.ConfigExplicit = overrides.ConfigExplicit
-	if err := loadConfigFile(&cfg); err != nil {
+
+	// Read the YAML into a side struct so we can tell which fields came from
+	// it — those resolve relative to the config file's directory, while CLI
+	// overrides resolve relative to CWD.
+	fileCfg, fileLoaded, err := readConfigFile(cfg.ConfigPath, cfg.ConfigExplicit)
+	if err != nil {
 		return Config{}, err
 	}
-	applyOverrides(&cfg, overrides)
+	configDir := filepath.Dir(cfg.ConfigPath)
+
+	// Merge YAML in. Path-bearing fields are resolved against configDir.
+	if fileLoaded {
+		mergeFromFile(&cfg, fileCfg, configDir)
+	}
+
+	// Apply CLI overrides last. Path-bearing fields resolve against CWD.
+	applyOverrides(&cfg, overrides, cwd)
+
+	// Defaults if neither YAML nor CLI provided.
+	if cfg.Out == "" {
+		cfg.Out = filepath.Join(cwd, defaultOutPath)
+	}
+
 	if cfg.SecuritySchemes == nil {
 		cfg.SecuritySchemes = map[string]Scheme{}
 	}
-	abs, err := filepath.Abs(cfg.Workdir)
-	if err != nil {
-		return Config{}, fmt.Errorf("resolve workdir: %w", err)
+
+	// Workdir is always absolute by this point — applyOverrides resolved a
+	// CLI --workdir, and the constructor seeded cwd otherwise.
+	if !filepath.IsAbs(cfg.Workdir) {
+		cfg.Workdir = filepath.Join(cwd, cfg.Workdir)
 	}
-	cfg.Workdir = abs
+	cfg.Workdir = filepath.Clean(cfg.Workdir)
+
 	if cfg.Format == "" {
 		cfg.Format = inferFormat(cfg.Out)
 	}
@@ -165,7 +215,21 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, fmt.Errorf("format must be yaml or json, got %q", cfg.Format)
 	}
 	if cfg.Entry == "" {
-		return Config{}, errors.New("entry is required")
+		// Discovery scope: explicit position arg > Sources > "./..." default.
+		// Comment extraction (Sources) stays module-wide so referenced types
+		// keep their field docs.
+		discoveryScope := cfg.EntryDiscoveryScope
+		if len(discoveryScope) == 0 {
+			discoveryScope = cfg.Sources
+		}
+		entry, err := DiscoverEntry(cfg.Workdir, discoveryScope)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Entry = entry.ImportPath + "." + entry.FuncName
+		cfg.EntryAutoDiscovered = true
+		resolved := entry
+		cfg.ResolvedEntry = &resolved
 	}
 	if err := validateSecuritySchemes(cfg.SecuritySchemes); err != nil {
 		return Config{}, err
@@ -212,26 +276,89 @@ func hasOAuthFlow(flows *OAuthFlows) bool {
 		flows.AuthorizationCode != nil
 }
 
-func loadConfigFile(cfg *Config) error {
-	data, err := os.ReadFile(cfg.ConfigPath)
+func readConfigFile(path string, explicit bool) (Config, bool, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) && !cfg.ConfigExplicit {
-			return nil
+		if errors.Is(err, os.ErrNotExist) && !explicit {
+			return Config{}, false, nil
 		}
-		return fmt.Errorf("read config %s: %w", cfg.ConfigPath, err)
+		return Config{}, false, fmt.Errorf("read config %s: %w", path, err)
 	}
-	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return fmt.Errorf("parse config %s: %w", cfg.ConfigPath, err)
+	var fileCfg Config
+	if err := yaml.Unmarshal(data, &fileCfg); err != nil {
+		return Config{}, false, fmt.Errorf("parse config %s: %w", path, err)
 	}
-	return nil
+	return fileCfg, true, nil
 }
 
-func applyOverrides(cfg *Config, o Overrides) {
+// mergeFromFile copies YAML-sourced fields onto cfg, resolving any path-bearing
+// values relative to the config file's directory.
+func mergeFromFile(cfg *Config, fileCfg Config, configDir string) {
+	if fileCfg.Entry != "" {
+		cfg.Entry = fileCfg.Entry
+	}
+	if fileCfg.Out != "" {
+		cfg.Out = resolveRelative(configDir, fileCfg.Out)
+	}
+	if fileCfg.Format != "" {
+		cfg.Format = fileCfg.Format
+	}
+	if len(fileCfg.Sources) > 0 {
+		cfg.Sources = append([]string(nil), fileCfg.Sources...)
+	}
+	cfg.IncludeTestFiles = fileCfg.IncludeTestFiles
+	if fileCfg.Info.Title != "" {
+		cfg.Info.Title = fileCfg.Info.Title
+	}
+	if fileCfg.Info.Version != "" {
+		cfg.Info.Version = fileCfg.Info.Version
+	}
+	if fileCfg.Info.Description != "" {
+		cfg.Info.Description = fileCfg.Info.Description
+	}
+	if len(fileCfg.Servers) > 0 {
+		cfg.Servers = fileCfg.Servers
+	}
+	if len(fileCfg.Tags) > 0 {
+		cfg.Tags = fileCfg.Tags
+	}
+	if len(fileCfg.SecuritySchemes) > 0 {
+		cfg.SecuritySchemes = fileCfg.SecuritySchemes
+	}
+	if fileCfg.MetadataHook != "" {
+		cfg.MetadataHook = fileCfg.MetadataHook
+	}
+	if fileCfg.EntryConfig.Loader != "" {
+		cfg.EntryConfig.Loader = fileCfg.EntryConfig.Loader
+	}
+	if fileCfg.EntryConfig.Path != "" {
+		cfg.EntryConfig.Path = resolveRelative(configDir, fileCfg.EntryConfig.Path)
+	}
+	if fileCfg.Workdir != "" {
+		cfg.Workdir = resolveRelative(configDir, fileCfg.Workdir)
+	}
+	cfg.KeepDriver = fileCfg.KeepDriver
+	cfg.Verbose = fileCfg.Verbose
+}
+
+// resolveRelative returns abs unchanged if it is already absolute,
+// otherwise resolves it against base.
+func resolveRelative(base, p string) string {
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(base, p)
+}
+
+// applyOverrides merges CLI flag values on top of cfg. Path-bearing flags
+// resolve relative to cwd (the directory the user actually invoked the CLI
+// from), not the config file's directory or workdir.
+func applyOverrides(cfg *Config, o Overrides, cwd string) {
 	if o.EntrySet {
 		cfg.Entry = o.Entry
 	}
 	if o.OutSet {
-		cfg.Out = o.Out
+		cfg.Out = resolveRelative(cwd, o.Out)
 	}
 	if o.FormatSet {
 		cfg.Format = o.Format
@@ -263,10 +390,13 @@ func applyOverrides(cfg *Config, o Overrides) {
 		cfg.EntryConfig.Loader = o.EntryConfigLoader
 	}
 	if o.EntryConfigPathSet {
-		cfg.EntryConfig.Path = o.EntryConfigPath
+		cfg.EntryConfig.Path = resolveRelative(cwd, o.EntryConfigPath)
 	}
 	if o.WorkdirSet {
-		cfg.Workdir = o.Workdir
+		cfg.Workdir = resolveRelative(cwd, o.Workdir)
+	}
+	if o.EntryDiscoveryScopeSet {
+		cfg.EntryDiscoveryScope = append([]string(nil), o.EntryDiscoveryScope...)
 	}
 	if o.KeepDriverSet {
 		cfg.KeepDriver = o.KeepDriver

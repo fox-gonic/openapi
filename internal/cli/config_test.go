@@ -44,7 +44,12 @@ metadataHook: example.com/app/internal/server.ConfigureOpenAPI
 	if cfg.Entry != "example.com/app/internal/server.NewEngineWithError" {
 		t.Fatalf("entry override not applied: %s", cfg.Entry)
 	}
-	if cfg.Out != "api/from-flag.yaml" || cfg.Format != "yaml" {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOut := filepath.Join(cwd, "api/from-flag.yaml")
+	if cfg.Out != wantOut || cfg.Format != "yaml" {
 		t.Fatalf("out/format override not applied: out=%s format=%s", cfg.Out, cfg.Format)
 	}
 	if cfg.Info.Title != "From Config" || cfg.Info.Version != "1.2.3" {

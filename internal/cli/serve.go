@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -20,6 +22,8 @@ type ServeConfig struct {
 	UIs   []string
 	Watch bool
 	Open  bool
+	// Stdout is where startup banners are written. Defaults to os.Stdout.
+	Stdout io.Writer
 }
 
 type servedSpec struct {
@@ -30,6 +34,10 @@ type servedSpec struct {
 }
 
 func Serve(cfg Config, serveCfg ServeConfig) error {
+	stdout := serveCfg.Stdout
+	if stdout == nil {
+		stdout = os.Stdout
+	}
 	state := &servedSpec{}
 	if err := refreshSpec(cfg, state); err != nil {
 		return err
@@ -42,24 +50,65 @@ func Serve(cfg Config, serveCfg ServeConfig) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/openapi.yaml", state.handleYAML)
 	mux.HandleFunc("/openapi.json", state.handleJSON)
-	for _, name := range normalizeUIs(serveCfg.UIs) {
+	uis := normalizeUIs(serveCfg.UIs)
+	uiRoutes := make([]string, 0, len(uis))
+	for _, name := range uis {
 		switch name {
 		case "swagger", "docs":
 			mux.HandleFunc("/docs", ui.Handler("swagger", "/openapi.yaml"))
+			uiRoutes = append(uiRoutes, "/docs (swagger)")
 		case "scalar":
 			mux.HandleFunc("/scalar", ui.Handler("scalar", "/openapi.yaml"))
+			uiRoutes = append(uiRoutes, "/scalar")
 		case "redoc":
 			mux.HandleFunc("/redoc", ui.Handler("redoc", "/openapi.yaml"))
+			uiRoutes = append(uiRoutes, "/redoc")
 		}
 	}
 	mux.Handle("/assets/", ui.AssetsHandler())
+
+	base := "http://" + serveCfg.Addr
+	autoTag := ""
+	if cfg.EntryAutoDiscovered {
+		autoTag = " (auto-discovered)"
+	}
+	fmt.Fprintf(stdout, "fox-openapi serve listening on %s\n", base)
+	fmt.Fprintf(stdout, "  entry:  %s%s\n", cfg.Entry, autoTag)
+	fmt.Fprintf(stdout, "  spec:   %s/openapi.yaml | %s/openapi.json\n", base, base)
+	if len(uiRoutes) > 0 {
+		urls := prefixURLs(base, uiRoutes)
+		fmt.Fprintf(stdout, "  ui:     %s\n", urls[0])
+		for _, u := range urls[1:] {
+			fmt.Fprintf(stdout, "          %s\n", u)
+		}
+	}
+	if serveCfg.Watch {
+		fmt.Fprintln(stdout, "  watch:  enabled (regenerates on .go changes)")
+	}
+	fmt.Fprintln(stdout, "  press Ctrl+C to stop")
+
 	if serveCfg.Open {
 		go func() {
 			time.Sleep(300 * time.Millisecond)
-			_ = openBrowser("http://" + serveCfg.Addr + "/docs")
+			_ = openBrowser(base + "/docs")
 		}()
 	}
 	return http.ListenAndServe(serveCfg.Addr, mux)
+}
+
+func prefixURLs(base string, routes []string) []string {
+	out := make([]string, len(routes))
+	for i, r := range routes {
+		// Routes may be of the form "/docs (swagger)"; only prefix the path.
+		path := r
+		suffix := ""
+		if idx := strings.Index(r, " "); idx > 0 {
+			path = r[:idx]
+			suffix = r[idx:]
+		}
+		out[i] = base + path + suffix
+	}
+	return out
 }
 
 func refreshSpec(cfg Config, state *servedSpec) error {
@@ -121,7 +170,7 @@ func openBrowser(url string) error {
 
 func normalizeUIs(values []string) []string {
 	if len(values) == 0 {
-		return []string{"swagger"}
+		return []string{"swagger", "scalar", "redoc"}
 	}
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(values))

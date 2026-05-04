@@ -3,9 +3,17 @@ package cli
 import "path/filepath"
 
 func RunPipeline(cfg Config) ([]byte, []string, error) {
-	entry, err := ResolveEntry(cfg.Workdir, cfg.Entry)
-	if err != nil {
-		return nil, nil, err
+	var entry Entry
+	if cfg.ResolvedEntry != nil {
+		// DiscoverEntry already loaded packages and validated the signature
+		// during LoadConfig; reuse that result instead of reloading.
+		entry = *cfg.ResolvedEntry
+	} else {
+		resolved, err := ResolveEntry(cfg.Workdir, cfg.Entry)
+		if err != nil {
+			return nil, nil, err
+		}
+		entry = resolved
 	}
 	var loader *ConfigLoader
 	if entry.TakesConfig && cfg.EntryConfig.Loader != "" {
@@ -36,8 +44,16 @@ func RunPipeline(cfg Config) ([]byte, []string, error) {
 }
 
 func ResolveOutputPath(cfg Config) string {
+	// cfg.Out is fully resolved during LoadConfig — CLI flags are joined
+	// against CWD and YAML values are joined against the config file's
+	// directory. Callers can rely on the result being an absolute, ready
+	// to write path.
 	if filepath.IsAbs(cfg.Out) {
 		return cfg.Out
 	}
-	return filepath.Join(cfg.Workdir, cfg.Out)
+	abs, err := filepath.Abs(cfg.Out)
+	if err != nil {
+		return cfg.Out
+	}
+	return abs
 }
