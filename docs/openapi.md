@@ -1,0 +1,405 @@
+# OpenAPI Generation
+
+Fox can generate an OpenAPI 3.0.3 document from registered routes and handler
+signatures. The production-recommended path is the `fox-openapi` CLI, which
+generates a committed YAML or JSON artifact during development or CI without
+mounting OpenAPI handlers in the business process.
+
+The underlying library can also read regular Go comments from source files to fill operation
+summaries, operation descriptions, and schema field descriptions. It does not
+require `doc` tags.
+
+## Install
+
+The OpenAPI generator and CLI live in a separate module:
+
+```go
+import "github.com/fox-gonic/openapi"
+```
+
+Install the CLI with:
+
+```bash
+go install github.com/fox-gonic/openapi/cmd/fox-openapi@latest
+```
+
+## CLI Usage
+
+Expose an entry function that registers routes and returns a `*fox.Engine`.
+This function should not call `Run`:
+
+```go
+package server
+
+import "github.com/fox-gonic/fox"
+
+func NewEngine() *fox.Engine {
+	engine := fox.New()
+	engine.GET("/users/:id", getUser)
+	return engine
+}
+```
+
+Create `fox-openapi.yaml` in the application root:
+
+```yaml
+entry: github.com/acme/myapp/internal/server.NewEngine
+out: api/openapi.yaml
+sources:
+  - ./...
+info:
+  title: Acme API
+  version: 1.0.0
+servers:
+  - url: https://api.example.com
+```
+
+Generate and verify the committed spec:
+
+```bash
+fox-openapi generate
+fox-openapi check
+```
+
+Preview locally with embedded offline UI assets:
+
+```bash
+fox-openapi serve --addr 127.0.0.1:8765 --ui swagger --ui scalar --ui redoc
+```
+
+`serve` exposes `/openapi.yaml`, `/openapi.json`, `/docs`, `/scalar`, and
+`/redoc`. It watches Go source files by default and keeps the last usable spec
+when regeneration fails.
+
+Advanced metadata that needs Go values can be provided through an optional hook:
+
+```go
+func ConfigureOpenAPI() []openapi.Option {
+	return []openapi.Option{
+		openapi.Group("/users", openapi.Tags("users")),
+		openapi.Operation("GET", "/users/:id", openapi.Security("BearerAuth")),
+	}
+}
+```
+
+Then configure:
+
+```yaml
+metadataHook: github.com/acme/myapp/internal/openapimeta.ConfigureOpenAPI
+```
+
+## Library Usage
+
+The library mount API is still useful for dev-time experiments, but the CLI is
+recommended for production artifacts.
+
+Register routes first, then create the generator:
+
+```go
+package main
+
+import (
+	"github.com/fox-gonic/fox"
+	"github.com/fox-gonic/openapi"
+)
+
+type GetUserRequest struct {
+	ID      int64  `uri:"id" binding:"required,gt=0"`
+	Verbose bool   `query:"verbose"`
+	Token   string `header:"X-Token" binding:"required"`
+}
+
+type UserResponse struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+func getUser(ctx *fox.Context, req GetUserRequest) (UserResponse, error) {
+	return UserResponse{}, nil
+}
+
+func main() {
+	router := fox.Default()
+
+	router.GET("/users/:id", getUser)
+
+	spec := openapi.New(router,
+		openapi.Info("My API", "1.0.0"),
+		openapi.Server("https://api.example.com"),
+		openapi.Source([]string{"."}),
+		openapi.Operation("GET", "/users/:id", openapi.Tags("users")),
+	)
+
+	openapi.Mount(router, spec)
+
+	router.Run(":8080")
+}
+```
+
+Then fetch the generated spec:
+
+```bash
+curl http://localhost:8080/openapi.yaml
+curl http://localhost:8080/openapi.json
+```
+
+By default, `openapi.Mount` registers `/openapi.yaml` and `/openapi.json`.
+Use custom paths when needed:
+
+```go
+openapi.Mount(router, spec,
+	openapi.MountYAML("/docs/openapi.yaml"),
+	openapi.MountJSON("/docs/openapi.json"),
+)
+```
+
+## Source Comments
+
+Use `openapi.Source` to add descriptions from regular Go comments:
+
+```go
+type CreateUserRequest struct {
+	// Display name for the new user.
+	Name string `json:"name" binding:"required"`
+}
+
+type UserResponse struct {
+	// Stable user identifier.
+	ID int64 `json:"id"`
+}
+
+// Create user.
+//
+// Creates a user and returns the persisted representation.
+func createUser(ctx *fox.Context, req CreateUserRequest) (UserResponse, error) {
+	return UserResponse{}, nil
+}
+
+spec := openapi.New(router,
+	openapi.Info("My API", "1.0.0"),
+	openapi.Source([]string{"./..."}),
+)
+```
+
+The first paragraph of the handler comment becomes the operation summary. The
+full handler comment becomes the operation description. Struct field comments
+become schema property descriptions.
+
+## Explicit Operation Metadata
+
+Use `openapi.Operation` when comments are not enough:
+
+```go
+spec := openapi.New(router,
+	openapi.Info("My API", "1.0.0"),
+	openapi.Operation("POST", "/users",
+		openapi.Summary("Create user"),
+		openapi.Description("Creates a user from the JSON request body."),
+		openapi.OperationID("createUser"),
+		openapi.Tags("users"),
+		openapi.Response(201, UserResponse{}, "Created"),
+	),
+)
+```
+
+Explicit metadata wins over comment-derived metadata. Route paths use the same
+Fox syntax used during route registration, such as `/users/:id`.
+
+Use `openapi.Group` to apply metadata to every route under a path prefix:
+
+```go
+spec := openapi.New(router,
+	openapi.Group("/api",
+		openapi.Tags("api"),
+		openapi.Security("BearerAuth"),
+	),
+	openapi.Operation("POST", "/api/users",
+		openapi.Tags("users"),
+	),
+)
+```
+
+Operation metadata wins over group metadata for fields such as tags, while
+group-level security is inherited when the operation does not set its own
+security requirements.
+
+## Security
+
+Register security schemes globally, then attach them to operations:
+
+```go
+spec := openapi.New(router,
+	openapi.SecurityScheme("BearerAuth", openapi.HTTPBearerSecurity("JWT bearer token")),
+	openapi.Operation("GET", "/users/:id",
+		openapi.Tags("users"),
+		openapi.Security("BearerAuth"),
+	),
+)
+```
+
+For OAuth2/OpenID Connect or custom schemes, pass a `*openapi3.SecurityScheme`
+directly to `openapi.SecurityScheme`.
+
+## Custom Type Formatters
+
+Use `RegisterFormatter` when a Go type should use a specific OpenAPI schema:
+
+```go
+type UserID string
+
+type UserResponse struct {
+	ID UserID `json:"id"`
+}
+
+spec := openapi.New(router,
+	openapi.RegisterFormatter(
+		reflect.TypeOf(UserID("")),
+		openapi3.NewStringSchema().WithFormat("uuid"),
+	),
+)
+```
+
+The registered schema is used wherever that Go type appears.
+
+## Custom Error Schema
+
+Handlers returning `error` get a default `components.responses.HTTPError`
+response. Override its schema when your app has a custom error renderer:
+
+```go
+type ErrorResponse struct {
+	Message string `json:"message"`
+}
+
+spec := openapi.New(router,
+	openapi.SetErrorSchema(ErrorResponse{}),
+)
+```
+
+## Write A YAML File
+
+You can also write the generated spec to disk:
+
+```go
+file, err := os.Create("openapi.yaml")
+if err != nil {
+	panic(err)
+}
+defer file.Close()
+
+if err := spec.WriteYAML(file); err != nil {
+	panic(err)
+}
+```
+
+Or get bytes directly:
+
+```go
+yamlData, err := spec.YAML()
+jsonData, err := spec.JSON()
+```
+
+## Check Warnings
+
+Generation is best-effort. Non-fatal issues are collected as warnings:
+
+```go
+for _, warning := range spec.Warnings() {
+	log.Println(warning)
+}
+```
+
+For example, Fox warns when a `uri` tag does not match the registered path:
+
+```go
+router.GET("/users/:id", getUser)
+
+type GetUserRequest struct {
+	UserID int64 `uri:"user_id"`
+}
+```
+
+The path contains `:id`, but the struct asks Fox to bind `user_id`, so the
+generated OpenAPI path parameter would not match the actual route placeholder.
+
+## What Is Generated
+
+The MVP generates:
+
+- OpenAPI version `3.0.3`
+- `info` from `openapi.Info(title, version)`
+- `servers` from `openapi.Server(url)`
+- `info.description`, server descriptions, and top-level tag metadata from CLI config
+- operation summaries and descriptions from handler comments via `openapi.Source`
+- explicit operation metadata from `openapi.Operation`
+- path-prefix metadata from `openapi.Group`
+- security schemes and operation security requirements
+- `/openapi.yaml` and `/openapi.json` handlers through `openapi.Mount`
+- custom type schema overrides through `openapi.RegisterFormatter`
+- `paths` and HTTP methods from registered fox routes
+- Gin-style path parameters such as `/users/:id` as `/users/{id}`
+- fallback path parameters from route placeholders when no matching `uri` tag exists
+- `uri`, `query`, and `header` parameters from handler input structs
+- warnings for `uri` tags that do not match registered path parameters
+- JSON request bodies from handler input struct fields
+- request and response field descriptions from struct comments via `openapi.Source`
+- URL-encoded form request bodies from `form` tags
+- JSON response bodies from handler return values
+- `text/plain` response bodies for handlers that return `string`
+- empty `200 OK` responses for handlers with no return value
+- Struct schemas under `components/schemas` with `$ref` reuse
+- Recursive and self-referential structs through component `$ref`s
+- Default error responses for handlers that return `error`
+- A reusable `HTTPError` schema based on `httperrors.Error`
+- Custom default error schemas through `openapi.SetErrorSchema`
+
+## Supported Tags
+
+Fox reads the same binding tags used by request binding:
+
+```go
+type CreateUserRequest struct {
+	Name  string `json:"name" binding:"required,min=3"`
+	Email string `json:"email" binding:"required,email"`
+}
+```
+
+Supported parameter location tags:
+
+| Tag | OpenAPI location |
+|---|---|
+| `uri:"id"` | `parameters[in=path]` |
+| `query:"page"` | `parameters[in=query]` |
+| `header:"X-Token"` | `parameters[in=header]` |
+| `json:"name"` | request body property |
+| `form:"username"` | `application/x-www-form-urlencoded` request body property |
+| `context:"user"` | skipped |
+
+Supported validation constraints in the MVP:
+
+| Binding rule | OpenAPI schema output |
+|---|---|
+| `required` | required parameter or required body field |
+| `email` | `format: email` |
+| `url`, `uri` | `format: uri` |
+| `uuid`, `uuid4` | `format: uuid` |
+| `min`, `gte` | `minLength`, `minItems`, or `minimum` |
+| `max`, `lte` | `maxLength`, `maxItems`, or `maximum` |
+| `gt`, `lt` | exclusive minimum / maximum |
+| `len` | exact string length, array length, or numeric bounds |
+| `oneof` | enum |
+| `alphanum` | alphanumeric pattern |
+
+## Current Limitations
+
+The current implementation intentionally does not generate:
+
+- DomainEngine-specific multi-host specs
+- Custom schema naming overrides
+- operation/group tag assignment directly from YAML config; use `metadataHook`
+  for route-specific metadata
+
+Those are planned as follow-up phases. The generator is designed so manual
+overrides can be added as metadata providers without replacing the route and
+schema generation core.
