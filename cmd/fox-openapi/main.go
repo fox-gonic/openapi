@@ -71,9 +71,14 @@ func newInitCommand() *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 && args[0] != "" {
-				if info, err := os.Stat(args[0]); err == nil && info.IsDir() {
-					opts.Workdir = args[0]
+				info, err := os.Stat(args[0])
+				if err != nil {
+					return exitError{code: cli.ExitUsage, err: fmt.Errorf("stat %s: %w", args[0], err)}
 				}
+				if !info.IsDir() {
+					return exitError{code: cli.ExitUsage, err: fmt.Errorf("%s is not a directory", args[0])}
+				}
+				opts.Workdir = args[0]
 			}
 			result, err := cli.InitConfig(opts)
 			if err != nil {
