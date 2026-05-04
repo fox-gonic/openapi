@@ -51,18 +51,18 @@ func Serve(cfg Config, serveCfg ServeConfig) error {
 	mux.HandleFunc("/openapi.yaml", state.handleYAML)
 	mux.HandleFunc("/openapi.json", state.handleJSON)
 	uis := normalizeUIs(serveCfg.UIs)
-	uiRoutes := make([]string, 0, len(uis))
+	uiRoutes := make([]uiRoute, 0, len(uis))
 	for _, name := range uis {
 		switch name {
 		case "swagger", "docs":
 			mux.HandleFunc("/docs", ui.Handler("swagger", "/openapi.yaml"))
-			uiRoutes = append(uiRoutes, "/docs (swagger)")
+			uiRoutes = append(uiRoutes, uiRoute{path: "/docs", label: "swagger"})
 		case "scalar":
 			mux.HandleFunc("/scalar", ui.Handler("scalar", "/openapi.yaml"))
-			uiRoutes = append(uiRoutes, "/scalar")
+			uiRoutes = append(uiRoutes, uiRoute{path: "/scalar"})
 		case "redoc":
 			mux.HandleFunc("/redoc", ui.Handler("redoc", "/openapi.yaml"))
-			uiRoutes = append(uiRoutes, "/redoc")
+			uiRoutes = append(uiRoutes, uiRoute{path: "/redoc"})
 		}
 	}
 	mux.Handle("/assets/", ui.AssetsHandler())
@@ -75,12 +75,12 @@ func Serve(cfg Config, serveCfg ServeConfig) error {
 	fmt.Fprintf(stdout, "fox-openapi serve listening on %s\n", base)
 	fmt.Fprintf(stdout, "  entry:  %s%s\n", cfg.Entry, autoTag)
 	fmt.Fprintf(stdout, "  spec:   %s/openapi.yaml | %s/openapi.json\n", base, base)
-	if len(uiRoutes) > 0 {
-		urls := prefixURLs(base, uiRoutes)
-		fmt.Fprintf(stdout, "  ui:     %s\n", urls[0])
-		for _, u := range urls[1:] {
-			fmt.Fprintf(stdout, "          %s\n", u)
+	for i, r := range uiRoutes {
+		prefix := "          "
+		if i == 0 {
+			prefix = "  ui:     "
 		}
+		fmt.Fprintf(stdout, "%s%s\n", prefix, r.render(base))
 	}
 	if serveCfg.Watch {
 		fmt.Fprintln(stdout, "  watch:  enabled (regenerates on .go changes)")
@@ -96,19 +96,20 @@ func Serve(cfg Config, serveCfg ServeConfig) error {
 	return http.ListenAndServe(serveCfg.Addr, mux)
 }
 
-func prefixURLs(base string, routes []string) []string {
-	out := make([]string, len(routes))
-	for i, r := range routes {
-		// Routes may be of the form "/docs (swagger)"; only prefix the path.
-		path := r
-		suffix := ""
-		if idx := strings.Index(r, " "); idx > 0 {
-			path = r[:idx]
-			suffix = r[idx:]
-		}
-		out[i] = base + path + suffix
+// uiRoute is a banner entry: a relative path plus an optional label
+// like "swagger" that disambiguates the URL from neighbouring entries.
+// Keeping path and label separate avoids parsing the rendered string back
+// out when prefixing with the listen base.
+type uiRoute struct {
+	path  string
+	label string
+}
+
+func (r uiRoute) render(base string) string {
+	if r.label == "" {
+		return base + r.path
 	}
-	return out
+	return base + r.path + " (" + r.label + ")"
 }
 
 func refreshSpec(cfg Config, state *servedSpec) error {
