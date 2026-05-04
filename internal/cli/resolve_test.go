@@ -36,6 +36,13 @@ func TestResolveEntryValidSignatures(t *testing.T) {
 	if !entry.TakesContext || !entry.TakesConfig {
 		t.Fatalf("expected context config entry: %+v", entry)
 	}
+	entry, err = ResolveEntry(dir, "example.com/app/internal/server.NewEngineWithConfigNoError")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !entry.TakesContext || !entry.TakesConfig || entry.ReturnsError {
+		t.Fatalf("expected context config entry without error: %+v", entry)
+	}
 }
 
 func TestResolveEntryRejectsBadSignature(t *testing.T) {

@@ -27,11 +27,11 @@ func TestInitConfigWritesDefaultConfigWithModuleEntry(t *testing.T) {
 	}
 	text := string(data)
 	for _, want := range []string{
-		"entry: example.com/app/internal/server.NewEngine\n",
-		"out: api/openapi.yaml\n",
+		"entry: \"example.com/app/internal/server.NewEngine\"\n",
+		"out: \"api/openapi.yaml\"\n",
 		"  - ./...\n",
-		"  title: Acme API\n",
-		"  version: 1.2.3\n",
+		"  title: \"Acme API\"\n",
+		"  version: \"1.2.3\"\n",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("config missing %q:\n%s", want, text)
@@ -74,5 +74,31 @@ func TestInitConfigIncludesJSONFormatWhenOutIsJSON(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "format: json\n") {
 		t.Fatalf("expected json format:\n%s", data)
+	}
+}
+
+func TestInitConfigQuotesSpecialYAMLCharacters(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.25\n")
+
+	err := InitConfig(InitOptions{
+		Workdir: dir,
+		Entry:   "example.com/app.NewEngine",
+		Title:   "Acme: Admin # API",
+		Version: "2026:05",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(Overrides{
+		ConfigPath:     filepath.Join(dir, "fox-openapi.yaml"),
+		ConfigExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Info.Title != "Acme: Admin # API" || cfg.Info.Version != "2026:05" {
+		t.Fatalf("unexpected info: %+v", cfg.Info)
 	}
 }

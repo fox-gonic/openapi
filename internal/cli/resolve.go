@@ -185,5 +185,5 @@ func isErrorType(typ types.Type) bool {
 }
 
 func entrySignatureError(value string) error {
-	return fmt.Errorf("entry function signature mismatch for %s: expected func() *fox.Engine, func() (*fox.Engine, error), func(context.Context) *fox.Engine, func(context.Context) (*fox.Engine, error), or func(context.Context, *Config) (*fox.Engine, error)", value)
+	return fmt.Errorf("entry function signature mismatch for %s: expected func() *fox.Engine, func() (*fox.Engine, error), func(context.Context) *fox.Engine, func(context.Context) (*fox.Engine, error), func(context.Context, *Config) *fox.Engine, or func(context.Context, *Config) (*fox.Engine, error)", value)
 }

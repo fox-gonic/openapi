@@ -115,6 +115,10 @@ func NewEngineWithConfig(ctx context.Context, cfg *config.Config) (*fox.Engine, 
 	return NewEngine(), nil
 }
 
+func NewEngineWithConfigNoError(ctx context.Context, cfg *config.Config) *fox.Engine {
+	return NewEngine()
+}
+
 func BrokenEntry() (*fox.Engine, error) {
 	return nil, errors.New("boom")
 }

@@ -78,6 +78,7 @@ func NewEngine() *fox.Engine
 func NewEngine() (*fox.Engine, error)
 func NewEngine(context.Context) *fox.Engine
 func NewEngine(context.Context) (*fox.Engine, error)
+func NewEngine(context.Context, *Config) *fox.Engine
 func NewEngine(context.Context, *Config) (*fox.Engine, error)
 ```
 

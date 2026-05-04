@@ -97,15 +97,15 @@ func modulePath(workdir string) (string, error) {
 
 func renderInitConfig(entry string, opts InitOptions) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "entry: %s\n", entry)
-	fmt.Fprintf(&b, "out: %s\n", opts.Out)
+	fmt.Fprintf(&b, "entry: %q\n", entry)
+	fmt.Fprintf(&b, "out: %q\n", opts.Out)
 	if inferFormat(opts.Out) == FormatJSON {
 		b.WriteString("format: json\n")
 	}
 	b.WriteString("sources:\n")
 	b.WriteString("  - ./...\n")
 	b.WriteString("info:\n")
-	fmt.Fprintf(&b, "  title: %s\n", opts.Title)
-	fmt.Fprintf(&b, "  version: %s\n", opts.Version)
+	fmt.Fprintf(&b, "  title: %q\n", opts.Title)
+	fmt.Fprintf(&b, "  version: %q\n", opts.Version)
 	return b.String()
 }
