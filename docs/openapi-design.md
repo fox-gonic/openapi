@@ -798,9 +798,9 @@ components:
 ### TODO 0：准备 CLI 验收 fixture（前置）
 
 - **目标**：让后续 TODO 1 有真实的 happy path 可跑
-- **背景**：当前 `examples/08-openapi/` 是 **library mount 模式**——main 里直接 `openapi.New(engine, ...)` + `openapi.Mount(...)`，业务代码侵入。CLI 验收需要的是无侵入风格，且**没有 `expected.yaml`**
+- **背景**：当前 `examples/openapi-mounted/` 是 **library mount 模式**——main 里直接 `openapi.New(engine, ...)` + `openapi.Mount(...)`，业务代码侵入。CLI 验收需要的是无侵入风格，且**没有 `expected.yaml`**
 - **交付**：
-  - 新增 `examples/09-openapi-cli/` 或改造 `examples/08-openapi/`：
+  - 新增 `examples/openapi-cli/` 或改造 `examples/openapi-mounted/`：
     - 业务代码**不 import** `fox-openapi`
     - 暴露 `func NewEngine() *fox.Engine`（位于 `internal/server/` 或包级目录均可）
     - 路由注册与外部依赖解耦（不连 DB）
@@ -808,8 +808,8 @@ components:
   - 把当前 example 期望产物固化为 `expected.yaml`（手工跑一次 generate 后人工 review 入库）
   - 该 fixture 自身的 `go.mod` 通过 local `replace` 指向 `openapi/`（与现有 example 一致）
 - **验收**：
-  - `cd examples/09-openapi-cli && go build ./...` 通过（业务代码独立可编译）
-  - `grep -r fox-openapi examples/09-openapi-cli/` 只命中 `go.mod` 与 `fox-openapi.yaml` 之类配置文件，不命中 `.go` 业务代码
+  - `cd examples/openapi-cli && go build ./...` 通过（业务代码独立可编译）
+  - `grep -r fox-openapi examples/openapi-cli/` 只命中 `go.mod` 与 `fox-openapi.yaml` 之类配置文件，不命中 `.go` 业务代码
   - `expected.yaml` 入库
 
 ### TODO 1：CLI 骨架 + generate 最小路径

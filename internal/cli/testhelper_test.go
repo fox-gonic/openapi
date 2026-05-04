@@ -73,10 +73,12 @@ replace github.com/fox-gonic/openapi => `+filepath.ToSlash(openapiRoot)+`
 	writeFile(t, filepath.Join(dir, "internal/server/server.go"), `package server
 
 import (
+	"context"
 	"errors"
 	"reflect"
 
 	"github.com/fox-gonic/fox"
+	"example.com/app/internal/config"
 	openapi "github.com/fox-gonic/openapi"
 	"github.com/getkin/kin-openapi/openapi3"
 )
@@ -105,6 +107,14 @@ func NewEngineWithError() (*fox.Engine, error) {
 	return NewEngine(), nil
 }
 
+func NewEngineWithContext(ctx context.Context) (*fox.Engine, error) {
+	return NewEngine(), nil
+}
+
+func NewEngineWithConfig(ctx context.Context, cfg *config.Config) (*fox.Engine, error) {
+	return NewEngine(), nil
+}
+
 func BrokenEntry() (*fox.Engine, error) {
 	return nil, errors.New("boom")
 }
@@ -119,6 +129,55 @@ func ConfigureOpenAPI() []openapi.Option {
 func badHook() []openapi.Option { return nil }
 
 func BadEntry(arg string) *fox.Engine { return nil }
+`)
+	writeFile(t, filepath.Join(dir, "internal/config/config.go"), `package config
+
+type Config struct {
+	Name string
+}
+
+func Load(path string) (*Config, error) {
+	return &Config{Name: path}, nil
+}
+`)
+	cmd := exec.Command("go", "mod", "tidy")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go mod tidy: %v\n%s", err, out)
+	}
+	return dir
+}
+
+func writeUserModuleWithoutOpenAPIRequire(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	foxRoot, openapiRoot := repoPaths(t)
+	writeFile(t, filepath.Join(dir, "go.mod"), `module example.com/app
+
+go 1.25
+
+require github.com/fox-gonic/fox v0.0.0
+
+replace github.com/fox-gonic/fox => `+filepath.ToSlash(foxRoot)+`
+replace github.com/fox-gonic/openapi => `+filepath.ToSlash(openapiRoot)+`
+`)
+	writeFile(t, filepath.Join(dir, "internal/server/server.go"), `package server
+
+import "github.com/fox-gonic/fox"
+
+type User struct {
+	ID string `+"`json:\"id\"`"+`
+}
+
+func GetUser(ctx *fox.Context) User {
+	return User{ID: "usr_1"}
+}
+
+func NewEngine() *fox.Engine {
+	e := fox.New()
+	e.GET("/users/:id", GetUser)
+	return e
+}
 `)
 	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Dir = dir

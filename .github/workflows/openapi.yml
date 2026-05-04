@@ -15,6 +15,6 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Generate OpenAPI CLI fixture spec
-        run: go run ./cmd/fox-openapi generate --workdir examples/09-openapi-cli
+        run: go run ./cmd/fox-openapi generate --workdir examples/openapi-cli
       - name: Verify generated spec is up to date
-        run: git diff --exit-code examples/09-openapi-cli/api/openapi.yaml
+        run: git diff --exit-code examples/openapi-cli/api/openapi.yaml

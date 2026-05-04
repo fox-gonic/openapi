@@ -94,7 +94,12 @@ func (g *Generator) Spec() *openapi3.T {
 // JSON()/YAML() call to reflect them without retaining stale state.
 func (g *Generator) Regenerate() {
 	g.generated = false
+	g.warnings = nil
+	g.schemaNames = make(map[reflect.Type]string)
+	g.schemaByName = make(map[string]reflect.Type)
 	g.spec.Paths = openapi3.NewPaths()
+	g.spec.Components.Schemas = openapi3.Schemas{}
+	g.spec.Components.Responses = openapi3.ResponseBodies{}
 }
 
 func (g *Generator) ensureGenerated() {

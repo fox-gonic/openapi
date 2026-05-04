@@ -17,6 +17,12 @@ go install github.com/fox-gonic/openapi/cmd/fox-openapi@latest
 
 Create `fox-openapi.yaml` in your application root:
 
+```bash
+fox-openapi init --entry internal/server.NewEngine --title "Acme API"
+```
+
+This writes a config like:
+
 ```yaml
 entry: github.com/acme/myapp/internal/server.NewEngine
 out: api/openapi.yaml

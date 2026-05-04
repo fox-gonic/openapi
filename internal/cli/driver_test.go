@@ -35,7 +35,7 @@ func TestWriteDriverRendersMetadataAndAbsoluteSources(t *testing.T) {
 			},
 		},
 	}
-	driverDir, err := WriteDriver(cfg, Entry{ImportPath: "example.com/app/internal/server", FuncName: "NewEngine"}, &Hook{ImportPath: "example.com/app/internal/server", FuncName: "ConfigureOpenAPI"})
+	driverDir, err := WriteDriver(cfg, Entry{ImportPath: "example.com/app/internal/server", FuncName: "NewEngine"}, &Hook{ImportPath: "example.com/app/internal/server", FuncName: "ConfigureOpenAPI"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestWriteDriverOmitsOpenAPI3AndYAMLImports(t *testing.T) {
 		Sources: []string{},
 		Info:    InfoConfig{Title: "Acme", Version: "1.0.0"},
 	}
-	driverDir, err := WriteDriver(cfg, Entry{ImportPath: "example.com/app", FuncName: "NewEngine"}, nil)
+	driverDir, err := WriteDriver(cfg, Entry{ImportPath: "example.com/app", FuncName: "NewEngine"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

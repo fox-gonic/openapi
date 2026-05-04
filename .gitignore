@@ -11,6 +11,9 @@
 # Test binary, built with `go test -c`
 *.test
 
+# Example binaries built with `go build` from an example directory
+examples/openapi-mounted/openapi-mounted
+
 # Code coverage profiles and other test artifacts
 *.out
 coverage.*

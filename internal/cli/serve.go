@@ -60,13 +60,13 @@ func Serve(cfg Config, serveCfg ServeConfig) error {
 }
 
 func refreshSpec(cfg Config, state *servedSpec) error {
-	cfg.Format = "yaml"
+	cfg.Format = FormatYAML
 	yamlBytes, _, err := RunPipeline(cfg)
 	if err != nil {
 		state.setError(err.Error())
 		return err
 	}
-	cfg.Format = "json"
+	cfg.Format = FormatJSON
 	jsonBytes, _, err := RunPipeline(cfg)
 	if err != nil {
 		state.setError(err.Error())

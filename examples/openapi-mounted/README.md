@@ -16,7 +16,7 @@ It shows how to:
 ## Run
 
 ```bash
-cd examples/08-openapi
+cd examples/openapi-mounted
 go run .
 ```
 

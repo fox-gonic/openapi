@@ -2,6 +2,9 @@
 
 `fox-openapi` generates an OpenAPI 3.0.3 document from a Fox engine at build time. The normal path keeps business code free of OpenAPI imports: expose a constructor such as `NewEngine() *fox.Engine`, then point the CLI at it.
 
+The CLI is built on Cobra, so every command supports consistent help output,
+for example `fox-openapi generate --help`.
+
 ## Install
 
 ```bash
@@ -17,6 +20,12 @@ go run ./cmd/fox-openapi version
 ## Quickstart
 
 Create `fox-openapi.yaml` in your application root:
+
+```bash
+fox-openapi init --entry internal/server.NewEngine --title "Acme API"
+```
+
+This writes a config like:
 
 ```yaml
 entry: github.com/acme/myapp/internal/server.NewEngine
@@ -44,9 +53,23 @@ fox-openapi check
 ```go
 func NewEngine() *fox.Engine
 func NewEngine() (*fox.Engine, error)
+func NewEngine(context.Context) *fox.Engine
+func NewEngine(context.Context) (*fox.Engine, error)
+func NewEngine(context.Context, *Config) (*fox.Engine, error)
 ```
 
 The function should register routes and return the engine. It should not call `Run`, open listeners, or start background infrastructure that is not needed for route registration.
+For config-taking entries, omit `entryConfig` to pass `nil` as the config
+argument, or provide a loader:
+
+```yaml
+entryConfig:
+  loader: github.com/acme/myapp/internal/config.Load
+  path: config.yaml
+```
+
+The user module does not need to import or require `github.com/fox-gonic/openapi`
+unless it uses a metadata hook or OpenAPI types directly.
 
 ## Config
 
@@ -62,9 +85,12 @@ Supported config keys:
 - `tags`: top-level OpenAPI tag registry.
 - `securitySchemes`: serializable HTTP, API key, OAuth2, or OpenID Connect schemes.
 - `metadataHook`: optional advanced Go hook.
-- `autoAdd`: run `go get github.com/fox-gonic/openapi` when the user module is missing the requirement.
+- `entryConfig`: optional `loader` and `path` for config-taking entries.
+- `autoAdd`: deprecated; the CLI no longer needs to add OpenAPI to the user module.
 
 CLI flags override config values. Config values override defaults.
+Security schemes are validated during config loading so missing required fields
+fail before a generated driver is built.
 
 ## Metadata Hook
 
@@ -88,11 +114,16 @@ metadataHook: github.com/acme/myapp/internal/openapimeta.ConfigureOpenAPI
 ## Commands
 
 ```bash
-fox-openapi generate --entry github.com/acme/myapp/internal/server.NewEngine --out api/openapi.yaml
+fox-openapi init --entry internal/server.NewEngine --title "Acme API"
+fox-openapi generate --entry github.com/acme/myapp/internal/server.NewEngine --out api/openapi.yaml --title "Acme API"
 fox-openapi check
 fox-openapi serve --addr 127.0.0.1:8765
 fox-openapi version
 ```
+
+`init` creates `fox-openapi.yaml`. Relative entries such as
+`internal/server.NewEngine` are expanded with the module path from `go.mod`.
+Pass `--force` to overwrite an existing config file.
 
 `serve` exposes `/openapi.yaml`, `/openapi.json`, `/docs`, `/scalar`, and `/redoc`. UI pages are embedded and do not load CDN assets.
 
@@ -100,15 +131,14 @@ fox-openapi version
 
 ```yaml
 - name: Generate OpenAPI spec
-  run: go run ./cmd/fox-openapi generate --workdir examples/09-openapi-cli
+  run: go run ./cmd/fox-openapi generate --workdir examples/openapi-cli
 - name: Verify spec is up to date
-  run: git diff --exit-code examples/09-openapi-cli/api/openapi.yaml
+  run: git diff --exit-code examples/openapi-cli/api/openapi.yaml
 ```
 
 ## Troubleshooting
 
 - `entry is required`: set `entry` in `fox-openapi.yaml` or pass `--entry`.
-- `user module must require github.com/fox-gonic/openapi`: add the module requirement or pass `--auto-add`.
 - Exit code `2`: generated driver failed to build. Check imports, replaces, and entry/hook signatures.
 - Exit code `3`: the driver built but failed at runtime. Check entry side effects or returned errors.
 - Exit code `4`: `check` found drift; run `fox-openapi generate` and commit the updated spec.
