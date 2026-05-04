@@ -151,24 +151,16 @@ func entryFromFunc(importPath string, obj *types.Func) (Entry, bool) {
 }
 
 // hasEntryMarker reports whether any line of doc carries the entry directive.
-// The Go scanner stores each // line and each /* */ block in its own
-// *ast.Comment with the delimiters intact, so we strip the leading "//" or
-// "/* ... */" once per entry and compare each line.
+// ast.CommentGroup.Text() already strips "//", "/* */" delimiters, and the
+// leading "*" prefix of block-comment lines, returning a clean newline-joined
+// body — leaving us with a plain line-by-line scan.
 func hasEntryMarker(doc *ast.CommentGroup) bool {
-	for _, c := range doc.List {
-		body := c.Text
-		if strings.HasPrefix(body, "//") {
-			if strings.TrimSpace(body[2:]) == entryMarker {
-				return true
-			}
-			continue
-		}
-		body = strings.TrimPrefix(body, "/*")
-		body = strings.TrimSuffix(body, "*/")
-		for line := range strings.SplitSeq(body, "\n") {
-			if strings.TrimSpace(line) == entryMarker {
-				return true
-			}
+	if doc == nil {
+		return false
+	}
+	for line := range strings.SplitSeq(doc.Text(), "\n") {
+		if strings.TrimSpace(line) == entryMarker {
+			return true
 		}
 	}
 	return false
