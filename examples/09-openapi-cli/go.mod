@@ -2,7 +2,7 @@ module github.com/fox-gonic/openapi/examples/09-openapi-cli
 
 go 1.25.0
 
-require github.com/fox-gonic/fox v0.0.11-0.20260504065654-1a01161538a8
+require github.com/fox-gonic/fox v0.0.11
 
 require (
 	github.com/bytedance/gopkg v0.1.3 // indirect

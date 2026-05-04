@@ -3,7 +3,7 @@ module github.com/fox-gonic/openapi
 go 1.25.0
 
 require (
-	github.com/fox-gonic/fox v0.0.11-0.20260504065654-1a01161538a8
+	github.com/fox-gonic/fox v0.0.11
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/getkin/kin-openapi v0.137.0
 	github.com/gin-gonic/gin v1.12.0

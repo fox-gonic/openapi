@@ -3,7 +3,7 @@ module github.com/fox-gonic/openapi/examples/08-openapi
 go 1.25.0
 
 require (
-	github.com/fox-gonic/fox v0.0.11-0.20260504065654-1a01161538a8
+	github.com/fox-gonic/fox v0.0.11
 	github.com/fox-gonic/openapi v0.0.0
 )
 
