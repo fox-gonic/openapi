@@ -228,10 +228,7 @@ func newVersionCommand() *cobra.Command {
 //  3. VCS revision (+dirty) recorded in build info for source builds.
 //  4. "dev" for builds with no metadata at all.
 func resolveVersion() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		info = nil
-	}
+	info, _ := debug.ReadBuildInfo()
 	return pickVersion(version, info)
 }
 
