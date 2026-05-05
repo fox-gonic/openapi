@@ -21,14 +21,21 @@ type InitOptions struct {
 	Force      bool
 }
 
+// InitResult describes what InitConfig wrote so callers can surface it.
+type InitResult struct {
+	ConfigPath     string
+	Entry          string
+	AutoDiscovered bool
+}
+
 // InitConfig writes an initial fox-openapi.yaml.
-func InitConfig(opts InitOptions) error {
+func InitConfig(opts InitOptions) (InitResult, error) {
 	if opts.Workdir == "" {
 		opts.Workdir = "."
 	}
 	workdir, err := filepath.Abs(opts.Workdir)
 	if err != nil {
-		return fmt.Errorf("resolve workdir: %w", err)
+		return InitResult{}, fmt.Errorf("resolve workdir: %w", err)
 	}
 	if opts.ConfigPath == "" {
 		opts.ConfigPath = defaultConfigPath
@@ -39,13 +46,19 @@ func InitConfig(opts InitOptions) error {
 	}
 	if !opts.Force {
 		if _, err := os.Stat(configPath); err == nil {
-			return fmt.Errorf("%s already exists; pass --force to overwrite", configPath)
+			return InitResult{}, fmt.Errorf("%s already exists; pass --force to overwrite", configPath)
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("stat %s: %w", configPath, err)
+			return InitResult{}, fmt.Errorf("stat %s: %w", configPath, err)
 		}
 	}
+	autoDiscovered := false
 	if opts.Entry == "" {
-		return errors.New("entry is required")
+		entry, err := DiscoverEntry(workdir, []string{"./..."})
+		if err != nil {
+			return InitResult{}, fmt.Errorf("entry not provided and auto-discovery failed: %w", err)
+		}
+		opts.Entry = entry.ImportPath + "." + entry.FuncName
+		autoDiscovered = true
 	}
 	if opts.Out == "" {
 		opts.Out = defaultOutPath
@@ -59,9 +72,12 @@ func InitConfig(opts InitOptions) error {
 
 	entry, err := normalizeInitEntry(workdir, opts.Entry)
 	if err != nil {
-		return err
+		return InitResult{}, err
 	}
-	return WriteAtomic(configPath, []byte(renderInitConfig(entry, opts)))
+	if err := WriteAtomic(configPath, []byte(renderInitConfig(entry, opts))); err != nil {
+		return InitResult{}, err
+	}
+	return InitResult{ConfigPath: configPath, Entry: entry, AutoDiscovered: autoDiscovered}, nil
 }
 
 func normalizeInitEntry(workdir, entry string) (string, error) {

@@ -42,16 +42,38 @@ func NewEngine() *fox.Engine {
 Create `fox-openapi.yaml` in your application root:
 
 ```bash
+# Auto-discover the entry function in the current module
+fox-openapi init
+
+# Or specify it explicitly
 fox-openapi init --entry internal/server.NewEngine --title "Acme API"
 ```
 
 Then generate, verify, and preview the committed spec:
 
 ```bash
-fox-openapi generate
+fox-openapi generate                       # auto-discovers entry from ./...
+fox-openapi generate ./internal/server     # narrow scope to a directory
 fox-openapi check
 fox-openapi serve --addr 127.0.0.1:8765
 ```
+
+When `entry` is omitted from the config and `--entry` is not passed, the CLI
+scans `sources` (default `./...`) for an exported function whose signature
+matches one of the supported entry shapes. If exactly one is found, it is
+used. If multiple are found, the CLI fails with the candidate list — pick one
+with `--entry` or annotate the canonical entry with a doc comment marker:
+
+```go
+// NewEngine builds the production HTTP engine.
+//
+// fox-openapi:entry
+func NewEngine() *fox.Engine { ... }
+```
+
+When at least one function carries the `fox-openapi:entry` marker, only
+marked candidates are considered, so adding the marker disambiguates without
+deleting other entry-shaped helpers.
 
 `serve` exposes `/openapi.yaml`, `/openapi.json`, `/docs`, `/scalar`, and
 `/redoc` with embedded offline UI assets.
@@ -97,6 +119,28 @@ entryConfig:
 Passing `nil` lets production code share one route-registration entry with
 OpenAPI generation without initializing databases or external providers.
 
+## Path resolution
+
+Paths follow standard go-tooling conventions:
+
+- **CLI flags** (`--out`, `--config`, `--workdir`, `--entry-config-path`): relative
+  to the **current working directory** (where you invoked the command).
+- **YAML fields** (`out`, `entryConfig.path`, `workdir`): relative to the
+  **directory containing the config file**, so `fox-openapi.yaml` and the
+  artefacts it points to keep a stable layout regardless of where you run.
+- **Positional path** (`fox-openapi generate ./internal/aone`): narrows where
+  the CLI **looks for the entry function**. It does **not** narrow source
+  scanning — `sources` (default `./...`) still drives comment extraction so
+  field/handler docs in sub-packages outside the entry directory are
+  preserved. To override scanning explicitly, set `sources` in YAML or pass
+  `--source`.
+
+```bash
+cd ~/myapp
+fox-openapi generate internal/aone --out api/openapi.yaml
+# wrote ~/myapp/api/openapi.yaml   ← relative to CWD, not the scanned dir
+```
+
 ## Config
 
 `fox-openapi init` writes a config like:
@@ -115,7 +159,9 @@ servers:
 
 Supported config keys:
 
-- `entry`: required entry function.
+- `entry`: entry function. Optional — when omitted, the CLI auto-discovers
+  an exported function with a supported signature from `sources`. Set
+  explicitly to override discovery, or use `// fox-openapi:entry` in source.
 - `out`: output file, default `api/openapi.yaml`.
 - `format`: `yaml` or `json`; inferred from `out` when omitted.
 - `sources`: source directories for Go doc comments; default `./...`.
@@ -272,7 +318,9 @@ Supported validation tags include `required`, `email`, `url`, `uri`, `uuid`,
 
 ## Troubleshooting
 
-- `entry is required`: set `entry` in `fox-openapi.yaml` or pass `--entry`.
+- `entry is required`: no `entry` provided and auto-discovery found 0 or
+  multiple candidates. Set `entry` in `fox-openapi.yaml`, pass `--entry`, or
+  add `// fox-openapi:entry` to the canonical function.
 - Exit code `2`: generated driver failed to build. Check imports, replaces, and entry/hook signatures.
 - Exit code `3`: the driver built but failed at runtime. Check entry side effects or returned errors.
 - Exit code `4`: `check` found drift; run `fox-openapi generate` and commit the updated spec.

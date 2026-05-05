@@ -40,30 +40,59 @@ func ResolveEntry(workdir, value string) (Entry, error) {
 	if !obj.Exported() {
 		return Entry{}, fmt.Errorf("entry function %s is not exported", value)
 	}
-	sig := obj.Type().(*types.Signature)
-	paramCount := sig.Params().Len()
-	if paramCount > 2 {
+	shape, ok := matchEntrySignature(obj.Type().(*types.Signature))
+	if !ok {
 		return Entry{}, entrySignatureError(value)
 	}
-	takesContext := false
-	takesConfig := false
+	return Entry{
+		ImportPath:   importPath,
+		FuncName:     funcName,
+		TakesContext: shape.takesContext,
+		TakesConfig:  shape.takesConfig,
+		ReturnsError: shape.returnsError,
+	}, nil
+}
+
+// entrySignatureShape captures the variant of a function that satisfies
+// the entry contract. Both ResolveEntry (explicit lookup) and
+// entryFromFunc (auto-discovery) share matchEntrySignature so the list
+// of supported shapes lives in a single place.
+type entrySignatureShape struct {
+	takesContext bool
+	takesConfig  bool
+	returnsError bool
+}
+
+func matchEntrySignature(sig *types.Signature) (entrySignatureShape, bool) {
+	var shape entrySignatureShape
+	paramCount := sig.Params().Len()
+	if paramCount > 2 {
+		return shape, false
+	}
 	if paramCount >= 1 {
 		if !isContextType(sig.Params().At(0).Type()) {
-			return Entry{}, entrySignatureError(value)
+			return shape, false
 		}
-		takesContext = true
+		shape.takesContext = true
 	}
 	if paramCount == 2 {
-		takesConfig = true
+		shape.takesConfig = true
 	}
 	results := sig.Results()
-	if results.Len() == 1 && isFoxEngine(results.At(0).Type()) {
-		return Entry{ImportPath: importPath, FuncName: funcName, TakesContext: takesContext, TakesConfig: takesConfig}, nil
+	switch results.Len() {
+	case 1:
+		if !isFoxEngine(results.At(0).Type()) {
+			return shape, false
+		}
+	case 2:
+		if !isFoxEngine(results.At(0).Type()) || !isErrorType(results.At(1).Type()) {
+			return shape, false
+		}
+		shape.returnsError = true
+	default:
+		return shape, false
 	}
-	if results.Len() == 2 && isFoxEngine(results.At(0).Type()) && isErrorType(results.At(1).Type()) {
-		return Entry{ImportPath: importPath, FuncName: funcName, ReturnsError: true, TakesContext: takesContext, TakesConfig: takesConfig}, nil
-	}
-	return Entry{}, entrySignatureError(value)
+	return shape, true
 }
 
 func ResolveConfigLoader(workdir, value, path string) (ConfigLoader, error) {

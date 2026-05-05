@@ -66,18 +66,26 @@ func newRootCommand() *cobra.Command {
 func newInitCommand() *cobra.Command {
 	opts := cli.InitOptions{ConfigPath: "fox-openapi.yaml", Out: "api/openapi.yaml", Title: "Fox API", Version: "0.0.0", Workdir: "."}
 	cmd := &cobra.Command{
-		Use:   "init",
+		Use:   "init [path]",
 		Short: "Create a fox-openapi.yaml config file",
-		Args:  cobra.NoArgs,
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cli.InitConfig(opts); err != nil {
+			if len(args) == 1 && args[0] != "" {
+				info, err := os.Stat(args[0])
+				if err != nil {
+					return exitError{code: cli.ExitUsage, err: fmt.Errorf("stat %s: %w", args[0], err)}
+				}
+				if !info.IsDir() {
+					return exitError{code: cli.ExitUsage, err: fmt.Errorf("%s is not a directory", args[0])}
+				}
+				opts.Workdir = args[0]
+			}
+			result, err := cli.InitConfig(opts)
+			if err != nil {
 				return exitError{code: cli.ExitUsage, err: err}
 			}
-			out := opts.ConfigPath
-			if !filepath.IsAbs(out) {
-				out = filepath.Join(opts.Workdir, out)
-			}
-			fmt.Printf("created %s\n", out)
+			fmt.Printf("created %s\n", result.ConfigPath)
+			fmt.Printf("  entry: %s%s\n", result.Entry, autoTag(result.AutoDiscovered))
 			return nil
 		},
 	}
@@ -95,11 +103,12 @@ func newInitCommand() *cobra.Command {
 func newGenerateCommand() *cobra.Command {
 	opts := newCommonOptions()
 	cmd := &cobra.Command{
-		Use:   "generate",
+		Use:   "generate [path]",
 		Short: "Generate an OpenAPI document",
-		Args:  cobra.NoArgs,
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			markOverridesFromFlags(opts, cmd.Flags())
+			applyPositionalPath(opts, args)
 			cfg, err := configFromOptions(opts)
 			if err != nil {
 				return exitError{code: cli.ExitUsage, err: err}
@@ -115,6 +124,8 @@ func newGenerateCommand() *cobra.Command {
 			if err := cli.WriteAtomic(out, data); err != nil {
 				return exitError{code: cli.ExitWriteFailed, err: fmt.Errorf("write %s: %w", out, err)}
 			}
+			fmt.Printf("wrote %s (%s, %d bytes)\n", out, strings.ToUpper(cfg.Format), len(data))
+			fmt.Printf("  entry: %s%s\n", cfg.Entry, autoTag(cfg.EntryAutoDiscovered))
 			return nil
 		},
 	}
@@ -125,11 +136,12 @@ func newGenerateCommand() *cobra.Command {
 func newCheckCommand() *cobra.Command {
 	opts := newCommonOptions()
 	cmd := &cobra.Command{
-		Use:   "check",
+		Use:   "check [path]",
 		Short: "Verify the committed OpenAPI document is up to date",
-		Args:  cobra.NoArgs,
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			markOverridesFromFlags(opts, cmd.Flags())
+			applyPositionalPath(opts, args)
 			cfg, err := configFromOptions(opts)
 			if err != nil {
 				return exitError{code: cli.ExitUsage, err: err}
@@ -149,6 +161,7 @@ func newCheckCommand() *cobra.Command {
 				return exitError{code: cli.ExitWriteFailed, err: fmt.Errorf("check %s: %w", out, err)}
 			}
 			fmt.Printf("%s is up to date.\n", out)
+			fmt.Printf("  entry: %s%s\n", cfg.Entry, autoTag(cfg.EntryAutoDiscovered))
 			return nil
 		},
 	}
@@ -158,14 +171,15 @@ func newCheckCommand() *cobra.Command {
 
 func newServeCommand() *cobra.Command {
 	opts := newCommonOptions()
-	serveCfg := cli.ServeConfig{Addr: "127.0.0.1:8765", UIs: []string{"swagger"}, Watch: true}
+	serveCfg := cli.ServeConfig{Addr: "127.0.0.1:8765", UIs: []string{"swagger", "scalar", "redoc"}, Watch: true}
 	var ui repeatedFlag
 	cmd := &cobra.Command{
-		Use:   "serve",
+		Use:   "serve [path]",
 		Short: "Serve the generated spec and offline docs UI",
-		Args:  cobra.NoArgs,
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			markOverridesFromFlags(opts, cmd.Flags())
+			applyPositionalPath(opts, args)
 			cfg, err := configFromOptions(opts)
 			if err != nil {
 				return exitError{code: cli.ExitUsage, err: err}
@@ -243,6 +257,64 @@ func markOverridesFromFlags(opts *commonOptions, flags *pflag.FlagSet) {
 	flags.Visit(func(f *pflag.Flag) { markOverride(opts.overrides, f.Name) })
 }
 
+// applyPositionalPath maps the optional positional [path] argument onto
+// EntryDiscoveryScope. The position argument narrows where the CLI looks
+// for the entry function — it does NOT narrow Sources (comment extraction),
+// because handler/field docs commonly live in sub-packages outside the
+// directory that contains the entry. Letting Sources default to the whole
+// module ensures descriptions on referenced types make it into the spec.
+//
+//   - "./internal/aone"      → EntryDiscoveryScope=["./internal/aone"]
+//   - "internal/aone"        → EntryDiscoveryScope=["./internal/aone/..."]
+//   - "github.com/x/y"       → EntryDiscoveryScope=["github.com/x/y"]
+func applyPositionalPath(opts *commonOptions, args []string) {
+	if len(args) == 0 {
+		return
+	}
+	path := args[0]
+	if path == "" {
+		return
+	}
+	opts.overrides.EntryDiscoveryScope = []string{normalizeSourcePattern(path)}
+	opts.overrides.EntryDiscoveryScopeSet = true
+}
+
+// normalizeSourcePattern adapts user-friendly input into a pattern that
+// go/packages interprets as a local directory rather than a stdlib path.
+// Bare relative directories ("internal/aone") gain a "./" prefix so they are
+// not mistaken for std packages, and a "/..." suffix so the whole subtree is
+// scanned (matching the user's intuition that the positional argument names
+// a region, not a single package — that's what comment extraction needs to
+// pick up handler/field docs from sub-packages too).
+//
+// The user can still pin to a single package by passing the explicit form
+// "./internal/aone" (no recursion) — when the input already starts with "./"
+// or "../" we trust it verbatim.
+func normalizeSourcePattern(p string) string {
+	if p == "" {
+		return p
+	}
+	// Already explicit: ./foo, ../bar, /abs/path, .
+	if p == "." || strings.HasPrefix(p, "./") || strings.HasPrefix(p, "../") || filepath.IsAbs(p) {
+		return p
+	}
+	// Existing local directory — prefix with "./" and recurse, so descriptions
+	// from sub-packages are picked up by Source().
+	if info, err := os.Stat(p); err == nil && info.IsDir() {
+		return "./" + p + "/..."
+	}
+	// Recursive pattern starting with a bare segment: "foo/..." → "./foo/..."
+	if head, ok := strings.CutSuffix(p, "/..."); ok {
+		if head != "" && !strings.Contains(head, ".") {
+			if info, err := os.Stat(head); err == nil && info.IsDir() {
+				return "./" + p
+			}
+		}
+	}
+	// Otherwise assume a Go import path / module pattern.
+	return p
+}
+
 func markOverride(o *cli.Overrides, name string) {
 	switch name {
 	case "config":
@@ -282,6 +354,15 @@ func handleError(err error) int {
 	}
 	fmt.Fprintln(os.Stderr, err)
 	return cli.ExitUsage
+}
+
+// autoTag annotates entry output with " (auto-discovered)" when the entry
+// was filled in by DiscoverEntry instead of explicit config/flag input.
+func autoTag(autoDiscovered bool) string {
+	if autoDiscovered {
+		return " (auto-discovered)"
+	}
+	return ""
 }
 
 type repeatedFlag struct {

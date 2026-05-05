@@ -11,7 +11,7 @@ func TestInitConfigWritesDefaultConfigWithModuleEntry(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.25\n")
 
-	err := InitConfig(InitOptions{
+	_, err := InitConfig(InitOptions{
 		Workdir: dir,
 		Entry:   "internal/server.NewEngine",
 		Title:   "Acme API",
@@ -43,7 +43,7 @@ func TestInitConfigNormalizesEntryInDirectSubpackage(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.25\n")
 
-	err := InitConfig(InitOptions{
+	_, err := InitConfig(InitOptions{
 		Workdir: dir,
 		Entry:   "server.NewEngine",
 	})
@@ -65,12 +65,12 @@ func TestInitConfigRefusesExistingConfigUnlessForced(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.25\n")
 	writeFile(t, filepath.Join(dir, "fox-openapi.yaml"), "entry: old\n")
 
-	err := InitConfig(InitOptions{Workdir: dir, Entry: "example.com/app.NewEngine"})
+	_, err := InitConfig(InitOptions{Workdir: dir, Entry: "example.com/app.NewEngine"})
 	if err == nil {
 		t.Fatal("expected existing config error")
 	}
 
-	err = InitConfig(InitOptions{Workdir: dir, Entry: "example.com/app.NewEngine", Force: true})
+	_, err = InitConfig(InitOptions{Workdir: dir, Entry: "example.com/app.NewEngine", Force: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestInitConfigIncludesJSONFormatWhenOutIsJSON(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.25\n")
 
-	err := InitConfig(InitOptions{
+	_, err := InitConfig(InitOptions{
 		Workdir: dir,
 		Entry:   "example.com/app.NewEngine",
 		Out:     "api/openapi.json",
@@ -102,7 +102,7 @@ func TestInitConfigQuotesSpecialYAMLCharacters(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.25\n")
 
-	err := InitConfig(InitOptions{
+	_, err := InitConfig(InitOptions{
 		Workdir: dir,
 		Entry:   "example.com/app.NewEngine",
 		Title:   "Acme: Admin # API",

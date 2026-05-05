@@ -37,16 +37,32 @@ func NewEngine() *fox.Engine {
 在业务项目根目录创建 `fox-openapi.yaml`：
 
 ```bash
+# 自动发现当前模块中的 entry 函数
+fox-openapi init
+
+# 或显式指定
 fox-openapi init --entry internal/server.NewEngine --title "Acme API"
 ```
 
 然后生成、校验并预览已提交的 spec：
 
 ```bash
-fox-openapi generate
+fox-openapi generate                       # 自动从 ./... 中发现 entry
+fox-openapi generate ./internal/server     # 将 entry 发现范围限定到指定目录
 fox-openapi check
 fox-openapi serve --addr 127.0.0.1:8765
 ```
+
+当配置中省略 `entry` 且未传 `--entry` 时，CLI 会扫描 `sources`（默认 `./...`），查找一个签名符合 entry 形状的导出函数。如果只匹配到一个就直接使用；匹配到多个则报错并列出所有候选 —— 用 `--entry` 选定，或在某个函数的 doc 注释中添加标记：
+
+```go
+// NewEngine 构建生产环境 HTTP engine。
+//
+// fox-openapi:entry
+func NewEngine() *fox.Engine { ... }
+```
+
+只要至少有一个候选携带 `fox-openapi:entry` 标记，就只考虑被标记的候选，因此可以在不删除其他 entry 形状辅助函数的情况下消除歧义。
 
 `serve` 会暴露 `/openapi.yaml`、`/openapi.json`、`/docs`、`/scalar` 和 `/redoc`，并使用内置的离线 UI 资源。
 
@@ -84,6 +100,20 @@ entryConfig:
 
 传入 `nil` 可以让生产代码和 OpenAPI 生成共用同一个路由注册入口，同时避免初始化数据库或外部服务。
 
+## 路径解析
+
+路径解析遵循标准 Go 工具链约定：
+
+- **CLI flags**（`--out`、`--config`、`--workdir`、`--entry-config-path`）：相对于**当前工作目录**（执行命令时所在的目录）。
+- **YAML 字段**（`out`、`entryConfig.path`、`workdir`）：相对于**配置文件所在目录**，这样 `fox-openapi.yaml` 与它指向的产物之间始终保持稳定的相对位置，无论从哪里运行命令。
+- **位置参数**（`fox-openapi generate ./internal/aone`）：仅用于**限定 entry 函数的发现范围**。它**不会**收窄源码扫描 —— `sources`（默认 `./...`）依然驱动注释提取，避免子包中的字段/handler 注释丢失。如需显式覆盖扫描范围，请在 YAML 中设置 `sources` 或传 `--source`。
+
+```bash
+cd ~/myapp
+fox-openapi generate internal/aone --out api/openapi.yaml
+# 写入 ~/myapp/api/openapi.yaml   ← 相对于 CWD，而非被扫描的目录
+```
+
 ## 配置
 
 `fox-openapi init` 会生成类似下面的配置：
@@ -102,7 +132,7 @@ servers:
 
 支持的配置项：
 
-- `entry`：必填，entry 函数。
+- `entry`：entry 函数。可省略 —— 省略时 CLI 会从 `sources` 中自动发现一个签名符合的导出函数。显式设置可覆盖自动发现，也可通过源码注释中的 `// fox-openapi:entry` 进行选择。
 - `out`：输出文件，默认 `api/openapi.yaml`。
 - `format`：`yaml` 或 `json`；未配置时根据 `out` 后缀推断。
 - `sources`：用于提取 Go 注释的源码路径，默认 `./...`。
@@ -253,7 +283,7 @@ for _, warning := range spec.Warnings() {
 
 ## 故障排查
 
-- `entry is required`：在 `fox-openapi.yaml` 中设置 `entry`，或通过 `--entry` 传入。
+- `entry is required`：未提供 `entry`，且自动发现匹配到 0 个或多个候选。请在 `fox-openapi.yaml` 中设置 `entry`、传 `--entry`，或在目标函数上添加 `// fox-openapi:entry` 标记。
 - Exit code `2`：生成的 driver 构建失败。检查 imports、replaces、entry 签名和 hook 签名。
 - Exit code `3`：driver 构建成功，但运行失败。检查 entry 的副作用或返回的错误。
 - Exit code `4`：`check` 发现 spec drift；运行 `fox-openapi generate` 并提交更新后的 spec。
