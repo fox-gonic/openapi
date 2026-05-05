@@ -371,7 +371,8 @@ func httpStatusValue(expr ast.Expr, imports map[string]string) (int, bool) {
 		if expr.Kind != token.INT {
 			return 0, false
 		}
-		value, err := strconv.Atoi(expr.Value)
+		parsed, err := strconv.ParseInt(expr.Value, 0, 0)
+		value := int(parsed)
 		if err != nil || value < 200 || value >= 300 {
 			return 0, false
 		}
