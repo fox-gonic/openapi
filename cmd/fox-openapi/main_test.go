@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -11,28 +12,57 @@ import (
 	"github.com/fox-gonic/openapi/internal/cli"
 )
 
-func TestResolveVersionPrefersLdflagsValue(t *testing.T) {
-	orig := version
-	defer func() { version = orig }()
-	version = "v9.9.9-test"
-	if got := resolveVersion(); got != "v9.9.9-test" {
-		t.Fatalf("resolveVersion() = %q, want %q", got, "v9.9.9-test")
+func TestPickVersion(t *testing.T) {
+	cases := []struct {
+		name     string
+		override string
+		info     *debug.BuildInfo
+		want     string
+	}{
+		{
+			name:     "ldflags override wins",
+			override: "v9.9.9-test",
+			info:     &debug.BuildInfo{Main: debug.Module{Version: "v0.1.0"}},
+			want:     "v9.9.9-test",
+		},
+		{
+			name: "module version from go install",
+			info: &debug.BuildInfo{Main: debug.Module{Version: "v0.2.1"}},
+			want: "v0.2.1",
+		},
+		{
+			name: "devel sentinel falls through to vcs revision",
+			info: &debug.BuildInfo{
+				Main: debug.Module{Version: "(devel)"},
+				Settings: []debug.BuildSetting{
+					{Key: "vcs.revision", Value: "abcdef0123456789deadbeef"},
+				},
+			},
+			want: "abcdef012345",
+		},
+		{
+			name: "dirty revision suffixed",
+			info: &debug.BuildInfo{
+				Main: debug.Module{Version: "(devel)"},
+				Settings: []debug.BuildSetting{
+					{Key: "vcs.revision", Value: "abcdef0123456789"},
+					{Key: "vcs.modified", Value: "true"},
+				},
+			},
+			want: "abcdef012345+dirty",
+		},
+		{
+			name: "no info at all",
+			info: nil,
+			want: "dev",
+		},
 	}
-}
-
-func TestResolveVersionFallsBackToBuildInfo(t *testing.T) {
-	orig := version
-	defer func() { version = orig }()
-	version = ""
-	// `go test` runs against the working module — Main.Version is "(devel)"
-	// and vcs.revision is populated. The expected outcome is therefore the
-	// short revision (with optional +dirty), or "dev" if VCS info is absent.
-	got := resolveVersion()
-	if got == "" {
-		t.Fatal("resolveVersion() returned empty string")
-	}
-	if got == "(devel)" {
-		t.Fatalf("resolveVersion() leaked the (devel) sentinel")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pickVersion(tc.override, tc.info); got != tc.want {
+				t.Fatalf("pickVersion = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

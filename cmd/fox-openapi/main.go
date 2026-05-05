@@ -228,11 +228,21 @@ func newVersionCommand() *cobra.Command {
 //  3. VCS revision (+dirty) recorded in build info for source builds.
 //  4. "dev" for builds with no metadata at all.
 func resolveVersion() string {
-	if version != "" {
-		return version
-	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
+		info = nil
+	}
+	return pickVersion(version, info)
+}
+
+// pickVersion is the pure core of resolveVersion, factored out so tests can
+// drive it with synthetic inputs instead of mutating the package-level
+// `version` symbol or relying on the test binary's build info.
+func pickVersion(override string, info *debug.BuildInfo) string {
+	if override != "" {
+		return override
+	}
+	if info == nil {
 		return "dev"
 	}
 	if v := info.Main.Version; v != "" && v != "(devel)" {
