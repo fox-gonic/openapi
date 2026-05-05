@@ -34,21 +34,11 @@ func NewEngine() *fox.Engine {
 }
 ```
 
-在业务项目根目录创建 `fox-openapi.yaml`：
-
-```bash
-# 自动发现当前模块中的 entry 函数
-fox-openapi init
-
-# 或显式指定
-fox-openapi init --entry internal/server.NewEngine --title "Acme API"
-```
-
 然后生成、校验并预览已提交的 spec：
 
 ```bash
-fox-openapi generate                       # 自动从 ./... 中发现 entry
-fox-openapi generate ./internal/server     # 将 entry 发现范围限定到指定目录
+fox-openapi                                # 自动从 ./... 中发现 entry
+fox-openapi ./internal/server              # 将 entry 发现范围限定到指定目录
 fox-openapi check
 fox-openapi serve --addr 127.0.0.1:8765
 ```
@@ -66,14 +56,17 @@ func NewEngine() *fox.Engine { ... }
 
 `serve` 会暴露 `/openapi.yaml`、`/openapi.json`、`/docs`、`/scalar` 和 `/redoc`，并使用内置的离线 UI 资源。
 
-如果项目配置很简单，也可以不创建配置文件，直接通过 flags 传入：
+配置简单的项目不需要创建配置文件。只有想覆盖默认值时才需要传 flags：
 
 ```bash
-fox-openapi generate \
+fox-openapi \
   --entry github.com/acme/myapp/internal/server.NewEngine \
   --out api/openapi.yaml \
   --title "Acme API"
 ```
+
+只有在需要提交 title、servers、tags、security schemes 或 entry config 等共享
+metadata 时，才需要使用 `fox-openapi init` 创建配置文件。
 
 CLI 会构建一个隔离的临时 driver。基础生成场景下，业务模块不需要 `tools.go` 文件，也不需要提交直接的 `github.com/fox-gonic/openapi` 依赖；driver 构建会解析这个临时依赖，并在结束后恢复 `go.mod` / `go.sum`。只有业务代码自己 import OpenAPI metadata hook 或 library API 时，才需要直接声明依赖。
 
@@ -150,26 +143,25 @@ CLI flags 会覆盖配置文件，配置文件会覆盖默认值。
 
 ```bash
 fox-openapi init --entry internal/server.NewEngine --title "Acme API"
+fox-openapi --entry github.com/acme/myapp/internal/server.NewEngine --out api/openapi.yaml --title "Acme API"
 fox-openapi generate --entry github.com/acme/myapp/internal/server.NewEngine --out api/openapi.yaml --title "Acme API"
 fox-openapi check
 fox-openapi serve --addr 127.0.0.1:8765
 fox-openapi version
 ```
 
-`generate`、`check` 和 `serve` 共用以下配置 flags：
+`fox-openapi`、`generate`、`check` 和 `serve` 共用以下常用配置 flags：
 
 - `--config`：配置文件路径，默认 `fox-openapi.yaml`。
 - `--entry`：entry 函数。
 - `--out`：输出路径，默认 `api/openapi.yaml`。
-- `--format`：`yaml` 或 `json`。
 - `--title` 和 `--version`：OpenAPI info metadata。
 - `--server`：可重复传入的 OpenAPI server URL。
-- `--source`：可重复传入的 Go 源码路径，用于提取注释。
-- `--include-test-files`：扫描源码注释时包含 `_test.go` 文件。
-- `--metadata-hook`：可选的 `func() []openapi.Option`。
-- `--entry-config-loader` 和 `--entry-config-path`：`entryConfig` 的命令行形式。
 - `--workdir`：业务项目根目录。
-- `--keep-driver`：保留生成的临时 driver，便于调试。
+
+高级 flags 仍然保留给脚本和特殊项目使用，但默认 help 中隐藏：`--format`、
+`--source`、`--include-test-files`、`--metadata-hook`、`--entry-config-loader`、
+`--entry-config-path`、`--keep-driver` 和 `--verbose`。
 
 `serve` 还支持 `--addr`、可重复传入的 `--ui`、`--watch` 和 `--open`。
 

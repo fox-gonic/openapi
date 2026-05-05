@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -173,6 +174,44 @@ func TestParseCommonHonorsInfoAndServerFlags(t *testing.T) {
 func TestRunSubcommandHelpSucceeds(t *testing.T) {
 	if code := run([]string{"generate", "--help"}); code != 0 {
 		t.Fatalf("run generate --help code = %d, want 0", code)
+	}
+}
+
+func TestRootCommandAcceptsGenerateFlags(t *testing.T) {
+	cmd := newRootCommand()
+	cmd.SetArgs([]string{
+		"--entry", "example.com/app.NewEngine",
+		"--out", "api/openapi.json",
+		"--title", "Acme API",
+	})
+	if err := cmd.ParseFlags(cmd.Flags().Args()); err != nil {
+		t.Fatalf("parse root flags: %v", err)
+	}
+	if cmd.Flags().Lookup("entry") == nil || cmd.Flags().Lookup("out") == nil || cmd.Flags().Lookup("title") == nil {
+		t.Fatal("root command should expose common generate flags")
+	}
+}
+
+func TestAdvancedGenerateFlagsAreHiddenButUsable(t *testing.T) {
+	cmd := newGenerateCommand()
+	for _, name := range []string{"source", "include-test-files", "metadata-hook", "entry-config-loader", "entry-config-path", "keep-driver", "verbose", "format"} {
+		flag := cmd.Flags().Lookup(name)
+		if flag == nil {
+			t.Fatalf("flag %q is not registered", name)
+		}
+		if !flag.Hidden {
+			t.Fatalf("flag %q should be hidden from normal help", name)
+		}
+	}
+
+	var help strings.Builder
+	cmd.SetOut(&help)
+	cmd.SetArgs([]string{"--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("generate --help: %v", err)
+	}
+	if strings.Contains(help.String(), "--metadata-hook") || strings.Contains(help.String(), "--entry-config-loader") {
+		t.Fatalf("advanced flags leaked into help:\n%s", help.String())
 	}
 }
 
