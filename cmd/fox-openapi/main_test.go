@@ -4,12 +4,67 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"testing"
 
 	"github.com/spf13/cobra"
 
 	"github.com/fox-gonic/openapi/internal/cli"
 )
+
+func TestPickVersion(t *testing.T) {
+	cases := []struct {
+		name     string
+		override string
+		info     *debug.BuildInfo
+		want     string
+	}{
+		{
+			name:     "ldflags override wins",
+			override: "v9.9.9-test",
+			info:     &debug.BuildInfo{Main: debug.Module{Version: "v0.1.0"}},
+			want:     "v9.9.9-test",
+		},
+		{
+			name: "module version from go install",
+			info: &debug.BuildInfo{Main: debug.Module{Version: "v0.2.1"}},
+			want: "v0.2.1",
+		},
+		{
+			name: "devel sentinel falls through to vcs revision",
+			info: &debug.BuildInfo{
+				Main: debug.Module{Version: "(devel)"},
+				Settings: []debug.BuildSetting{
+					{Key: "vcs.revision", Value: "abcdef0123456789deadbeef"},
+				},
+			},
+			want: "abcdef012345",
+		},
+		{
+			name: "dirty revision suffixed",
+			info: &debug.BuildInfo{
+				Main: debug.Module{Version: "(devel)"},
+				Settings: []debug.BuildSetting{
+					{Key: "vcs.revision", Value: "abcdef0123456789"},
+					{Key: "vcs.modified", Value: "true"},
+				},
+			},
+			want: "abcdef012345+dirty",
+		},
+		{
+			name: "no info at all",
+			info: nil,
+			want: "dev",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pickVersion(tc.override, tc.info); got != tc.want {
+				t.Fatalf("pickVersion = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
 
 func parseCommon(name string, args []string) (cli.Config, int) {
 	opts := newCommonOptions()
