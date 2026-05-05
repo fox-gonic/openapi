@@ -83,10 +83,23 @@ type statusResponse[T any] struct {
 	data   T
 }
 
+type ambiguousStatusResponse struct {
+	status  int
+	payload documentedUserResponse
+	meta    userResponse
+}
+
 func statusResponseWithStatus[T any](status int, data T) statusResponse[T] {
 	return statusResponse[T]{
 		status: status,
 		data:   data,
+	}
+}
+
+func ambiguousStatusResponseWithStatus(status int, payload documentedUserResponse) ambiguousStatusResponse {
+	return ambiguousStatusResponse{
+		status:  status,
+		payload: payload,
 	}
 }
 
@@ -129,6 +142,14 @@ func createDocumentedUser(_ *fox.Context, _ documentedCreateUserRequest) documen
 
 func createDocumentedUserWithStatus(_ *fox.Context, _ documentedCreateUserRequest) (statusResponse[documentedUserResponse], error) {
 	return statusResponseWithStatus(http.StatusCreated, documentedUserResponse{}), nil
+}
+
+func createDocumentedUserNoContent(_ *fox.Context, _ documentedCreateUserRequest) (statusResponse[documentedUserResponse], error) {
+	return statusResponseWithStatus(http.StatusNoContent, documentedUserResponse{}), nil
+}
+
+func createDocumentedUserAmbiguousStatus(_ *fox.Context, _ documentedCreateUserRequest) (ambiguousStatusResponse, error) {
+	return ambiguousStatusResponseWithStatus(http.StatusAccepted, documentedUserResponse{}), nil
 }
 
 func getCustomID(_ *fox.Context) customIDResponse {
@@ -594,6 +615,60 @@ func TestGenerateInfersStatusResponseWrapperFromSource(t *testing.T) {
 	for name := range schemas {
 		require.NotContains(t, name, "statusResponse")
 	}
+}
+
+func TestGenerateOmitsBodyForInferredNoContentStatusResponse(t *testing.T) {
+	engine := fox.New()
+	engine.POST("/status-users", createDocumentedUserNoContent)
+
+	g := openapi.New(engine,
+		openapi.Info("Fox Test API", "1.0.0"),
+		openapi.Source([]string{"./..."}, openapi.IncludeTestFiles()),
+	)
+
+	data, err := g.JSON()
+	require.NoError(t, err)
+
+	var spec map[string]any
+	require.NoError(t, json.Unmarshal(data, &spec))
+
+	op := spec["paths"].(map[string]any)["/status-users"].(map[string]any)["post"].(map[string]any)
+	responses := op["responses"].(map[string]any)
+	require.NotContains(t, responses, "200")
+
+	noContent := responses["204"].(map[string]any)
+	require.Equal(t, "No Content", noContent["description"])
+	require.NotContains(t, noContent, "content")
+
+	schemas := spec["components"].(map[string]any)["schemas"].(map[string]any)
+	for name := range schemas {
+		require.NotContains(t, name, "statusResponse")
+	}
+}
+
+func TestGenerateUsesInferredStatusWhenStatusWrapperBodyIsAmbiguous(t *testing.T) {
+	engine := fox.New()
+	engine.POST("/status-users", createDocumentedUserAmbiguousStatus)
+
+	g := openapi.New(engine,
+		openapi.Info("Fox Test API", "1.0.0"),
+		openapi.Source([]string{"./..."}, openapi.IncludeTestFiles()),
+	)
+
+	data, err := g.JSON()
+	require.NoError(t, err)
+
+	var spec map[string]any
+	require.NoError(t, json.Unmarshal(data, &spec))
+
+	op := spec["paths"].(map[string]any)["/status-users"].(map[string]any)["post"].(map[string]any)
+	responses := op["responses"].(map[string]any)
+	require.NotContains(t, responses, "200")
+
+	accepted := responses["202"].(map[string]any)
+	require.Equal(t, "Accepted", accepted["description"])
+	schema := accepted["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
+	require.Equal(t, "#/components/schemas/openapi_test_ambiguousStatusResponse", schema["$ref"])
 }
 
 func TestGenerateAppliesSecuritySchemes(t *testing.T) {

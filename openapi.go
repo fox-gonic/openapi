@@ -309,6 +309,9 @@ func (g *Generator) addResponses(op *openapi3.Operation, typ reflect.Type, handl
 
 func (g *Generator) successResponse(status int, typ reflect.Type) *openapi3.Response {
 	response := openapi3.NewResponse().WithDescription(http.StatusText(status))
+	if status == http.StatusNoContent || status == http.StatusResetContent {
+		return response
+	}
 	if deref(typ).Kind() == reflect.String {
 		return response.WithContent(openapi3.Content{
 			"text/plain": openapi3.NewMediaType().WithSchemaRef(g.schemaRef(typ)),
@@ -324,7 +327,7 @@ func (g *Generator) sourceInferredSuccessResponse(handlerName string, typ reflec
 	}
 	body, ok := statusWrapperBodyType(typ)
 	if !ok {
-		return 0, nil, false
+		return status, typ, true
 	}
 	return status, body, true
 }
