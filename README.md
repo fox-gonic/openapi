@@ -39,21 +39,11 @@ func NewEngine() *fox.Engine {
 }
 ```
 
-Create `fox-openapi.yaml` in your application root:
-
-```bash
-# Auto-discover the entry function in the current module
-fox-openapi init
-
-# Or specify it explicitly
-fox-openapi init --entry internal/server.NewEngine --title "Acme API"
-```
-
 Then generate, verify, and preview the committed spec:
 
 ```bash
-fox-openapi generate                       # auto-discovers entry from ./...
-fox-openapi generate ./internal/server     # narrow scope to a directory
+fox-openapi                                # auto-discovers entry from ./...
+fox-openapi ./internal/server              # narrow entry discovery to a directory
 fox-openapi check
 fox-openapi serve --addr 127.0.0.1:8765
 ```
@@ -78,14 +68,18 @@ deleting other entry-shaped helpers.
 `serve` exposes `/openapi.yaml`, `/openapi.json`, `/docs`, `/scalar`, and
 `/redoc` with embedded offline UI assets.
 
-For small projects, skip the config file and pass flags:
+For small projects, no config file is required. Pass flags only when you want
+to override defaults:
 
 ```bash
-fox-openapi generate \
+fox-openapi \
   --entry github.com/acme/myapp/internal/server.NewEngine \
   --out api/openapi.yaml \
   --title "Acme API"
 ```
+
+Use `fox-openapi init` only when you want to commit a config file for shared
+metadata such as title, servers, tags, security schemes, or entry config.
 
 The CLI builds an isolated temporary driver. For basic generation, the
 application module does not need a `tools.go` file or a committed direct
@@ -179,26 +173,26 @@ CLI flags override config values. Config values override defaults.
 
 ```bash
 fox-openapi init --entry internal/server.NewEngine --title "Acme API"
+fox-openapi --entry github.com/acme/myapp/internal/server.NewEngine --out api/openapi.yaml --title "Acme API"
 fox-openapi generate --entry github.com/acme/myapp/internal/server.NewEngine --out api/openapi.yaml --title "Acme API"
 fox-openapi check
 fox-openapi serve --addr 127.0.0.1:8765
 fox-openapi version
 ```
 
-`generate`, `check`, and `serve` share the common config flags:
+`fox-openapi`, `generate`, `check`, and `serve` share the common config flags:
 
 - `--config`: config file path, default `fox-openapi.yaml`.
 - `--entry`: entry function.
 - `--out`: output path, default `api/openapi.yaml`.
-- `--format`: `yaml` or `json`.
 - `--title` and `--version`: OpenAPI info metadata.
 - `--server`: repeatable OpenAPI server URL.
-- `--source`: repeatable Go source path for comment extraction.
-- `--include-test-files`: include `_test.go` files while scanning comments.
-- `--metadata-hook`: optional `func() []openapi.Option`.
-- `--entry-config-loader` and `--entry-config-path`: command-line form of `entryConfig`.
 - `--workdir`: user project root.
-- `--keep-driver`: keep the generated temporary driver for debugging.
+
+Advanced flags remain available for scripts and unusual projects but are hidden
+from normal help: `--format`, `--source`, `--include-test-files`,
+`--metadata-hook`, `--entry-config-loader`, `--entry-config-path`,
+`--keep-driver`, and `--verbose`.
 
 `serve` also supports `--addr`, repeatable `--ui`, `--watch`, and `--open`.
 
@@ -238,6 +232,13 @@ Then configure it:
 ```yaml
 metadataHook: github.com/acme/myapp/internal/openapimeta.ConfigureOpenAPI
 ```
+
+Explicit success responses override the default success response inferred from
+the handler return type. For simple status wrapper helpers such as
+`return statusResponse(http.StatusCreated, UserResponse{}), nil`, `Source`
+can infer the response status from the return statement and use the wrapper's
+payload type as the response schema, so most handlers do not need a metadata
+hook just to document `201` or `202` responses.
 
 ## Library Usage
 

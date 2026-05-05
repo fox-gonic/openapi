@@ -54,12 +54,18 @@ func run(args []string) int {
 }
 
 func newRootCommand() *cobra.Command {
+	opts := newCommonOptions()
 	cmd := &cobra.Command{
-		Use:           "fox-openapi",
+		Use:           "fox-openapi [path]",
 		Short:         "Generate OpenAPI specs for Fox applications",
+		Args:          cobra.MaximumNArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runGenerate(cmd, opts, args)
+		},
 	}
+	bindCommonFlags(cmd.Flags(), opts)
 	cmd.AddCommand(newInitCommand())
 	cmd.AddCommand(newGenerateCommand())
 	cmd.AddCommand(newCheckCommand())
@@ -112,30 +118,34 @@ func newGenerateCommand() *cobra.Command {
 		Short: "Generate an OpenAPI document",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			markOverridesFromFlags(opts, cmd.Flags())
-			applyPositionalPath(opts, args)
-			cfg, err := configFromOptions(opts)
-			if err != nil {
-				return exitError{code: cli.ExitUsage, err: err}
-			}
-			data, warnings, err := cli.RunPipeline(cfg)
-			for _, warning := range warnings {
-				fmt.Fprintln(os.Stderr, warning)
-			}
-			if err != nil {
-				return err
-			}
-			out := cli.ResolveOutputPath(cfg)
-			if err := cli.WriteAtomic(out, data); err != nil {
-				return exitError{code: cli.ExitWriteFailed, err: fmt.Errorf("write %s: %w", out, err)}
-			}
-			fmt.Printf("wrote %s (%s, %d bytes)\n", out, strings.ToUpper(cfg.Format), len(data))
-			fmt.Printf("  entry: %s%s\n", cfg.Entry, autoTag(cfg.EntryAutoDiscovered))
-			return nil
+			return runGenerate(cmd, opts, args)
 		},
 	}
 	bindCommonFlags(cmd.Flags(), opts)
 	return cmd
+}
+
+func runGenerate(cmd *cobra.Command, opts *commonOptions, args []string) error {
+	markOverridesFromFlags(opts, cmd.Flags())
+	applyPositionalPath(opts, args)
+	cfg, err := configFromOptions(opts)
+	if err != nil {
+		return exitError{code: cli.ExitUsage, err: err}
+	}
+	data, warnings, err := cli.RunPipeline(cfg)
+	for _, warning := range warnings {
+		fmt.Fprintln(os.Stderr, warning)
+	}
+	if err != nil {
+		return err
+	}
+	out := cli.ResolveOutputPath(cfg)
+	if err := cli.WriteAtomic(out, data); err != nil {
+		return exitError{code: cli.ExitWriteFailed, err: fmt.Errorf("write %s: %w", out, err)}
+	}
+	fmt.Printf("wrote %s (%s, %d bytes)\n", out, strings.ToUpper(cfg.Format), len(data))
+	fmt.Printf("  entry: %s%s\n", cfg.Entry, autoTag(cfg.EntryAutoDiscovered))
+	return nil
 }
 
 func newCheckCommand() *cobra.Command {
@@ -302,7 +312,23 @@ func bindCommonFlags(flags *pflag.FlagSet, opts *commonOptions) {
 	flags.StringVar(&o.Workdir, "workdir", ".", "user project root")
 	flags.BoolVar(&o.KeepDriver, "keep-driver", false, "keep generated driver")
 	flags.BoolVar(&o.Verbose, "verbose", false, "verbose output")
+	hideAdvancedFlags(flags,
+		"source",
+		"include-test-files",
+		"metadata-hook",
+		"entry-config-loader",
+		"entry-config-path",
+		"keep-driver",
+		"verbose",
+		"format",
+	)
 	flags.SortFlags = false
+}
+
+func hideAdvancedFlags(flags *pflag.FlagSet, names ...string) {
+	for _, name := range names {
+		_ = flags.MarkHidden(name)
+	}
 }
 
 func markOverridesFromFlags(opts *commonOptions, flags *pflag.FlagSet) {
