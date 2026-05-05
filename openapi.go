@@ -171,7 +171,7 @@ func (g *Generator) generateRoute(route fox.RouteInfo) {
 		g.addInput(op, route, route.HandlerType.In(1))
 	}
 	g.addMissingPathParams(op, route.Path)
-	g.addResponses(op, route.HandlerType)
+	g.addResponses(op, route.HandlerType, route.HandlerName, !g.hasExplicitSuccessResponse(route.Method, route.Path))
 	g.applyOperationDoc(op, route.Method, route.Path)
 
 	g.spec.AddOperation(openAPIPath(route.Path), route.Method, op)
@@ -284,16 +284,22 @@ func (g *Generator) fieldSchemaRefForType(owner reflect.Type, field reflect.Stru
 	return ref
 }
 
-func (g *Generator) addResponses(op *openapi3.Operation, typ reflect.Type) {
+func (g *Generator) addResponses(op *openapi3.Operation, typ reflect.Type, handlerName string, inferSuccess bool) {
 	if typ.NumOut() == 0 {
-		op.Responses.Set("200", &openapi3.ResponseRef{Value: openapi3.NewResponse().
-			WithDescription(http.StatusText(http.StatusOK))})
+		if inferSuccess {
+			op.Responses.Set("200", &openapi3.ResponseRef{Value: openapi3.NewResponse().
+				WithDescription(http.StatusText(http.StatusOK))})
+		}
 		return
 	}
 
 	firstOut := typ.Out(0)
-	if !isError(firstOut) {
-		op.Responses.Set("200", &openapi3.ResponseRef{Value: g.successResponse(firstOut)})
+	if inferSuccess && !isError(firstOut) {
+		if status, body, ok := g.sourceInferredSuccessResponse(handlerName, firstOut); ok {
+			op.Responses.Set(strconv.Itoa(status), &openapi3.ResponseRef{Value: g.successResponse(status, body)})
+		} else {
+			op.Responses.Set("200", &openapi3.ResponseRef{Value: g.successResponse(http.StatusOK, firstOut)})
+		}
 	}
 
 	if typ.NumOut() == 2 || isError(firstOut) {
@@ -301,14 +307,63 @@ func (g *Generator) addResponses(op *openapi3.Operation, typ reflect.Type) {
 	}
 }
 
-func (g *Generator) successResponse(typ reflect.Type) *openapi3.Response {
-	response := openapi3.NewResponse().WithDescription(http.StatusText(http.StatusOK))
+func (g *Generator) successResponse(status int, typ reflect.Type) *openapi3.Response {
+	response := openapi3.NewResponse().WithDescription(http.StatusText(status))
 	if deref(typ).Kind() == reflect.String {
 		return response.WithContent(openapi3.Content{
 			"text/plain": openapi3.NewMediaType().WithSchemaRef(g.schemaRef(typ)),
 		})
 	}
 	return response.WithJSONSchemaRef(g.schemaRef(typ))
+}
+
+func (g *Generator) sourceInferredSuccessResponse(handlerName string, typ reflect.Type) (int, reflect.Type, bool) {
+	status, ok := g.docs.returnStatus(handlerName)
+	if !ok {
+		return 0, nil, false
+	}
+	body, ok := statusWrapperBodyType(typ)
+	if !ok {
+		return 0, nil, false
+	}
+	return status, body, true
+}
+
+func statusWrapperBodyType(typ reflect.Type) (reflect.Type, bool) {
+	typ = deref(typ)
+	if typ.Kind() != reflect.Struct {
+		return nil, false
+	}
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if strings.EqualFold(field.Name, "data") {
+			return field.Type, true
+		}
+	}
+
+	var body reflect.Type
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if isStatusField(field) {
+			continue
+		}
+		if body != nil {
+			return nil, false
+		}
+		body = field.Type
+	}
+	return body, body != nil
+}
+
+func isStatusField(field reflect.StructField) bool {
+	if strings.EqualFold(field.Name, "status") {
+		return true
+	}
+	switch deref(field.Type).Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return true
+	}
+	return false
 }
 
 func (g *Generator) schemaRef(typ reflect.Type) *openapi3.SchemaRef {

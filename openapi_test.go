@@ -78,6 +78,18 @@ type customErrorResponse struct {
 	Message string `json:"message"`
 }
 
+type statusResponse[T any] struct {
+	status int
+	data   T
+}
+
+func statusResponseWithStatus[T any](status int, data T) statusResponse[T] {
+	return statusResponse[T]{
+		status: status,
+		data:   data,
+	}
+}
+
 func getUser(_ *fox.Context, _ getUserRequest) (userResponse, error) {
 	return userResponse{}, nil
 }
@@ -113,6 +125,10 @@ func getMismatchedURI(_ *fox.Context, _ mismatchedURIRequest) string {
 // Creates a user and returns the persisted representation.
 func createDocumentedUser(_ *fox.Context, _ documentedCreateUserRequest) documentedUserResponse {
 	return documentedUserResponse{}
+}
+
+func createDocumentedUserWithStatus(_ *fox.Context, _ documentedCreateUserRequest) (statusResponse[documentedUserResponse], error) {
+	return statusResponseWithStatus(http.StatusCreated, documentedUserResponse{}), nil
 }
 
 func getCustomID(_ *fox.Context) customIDResponse {
@@ -509,11 +525,75 @@ func TestGenerateAppliesExplicitOperationMetadata(t *testing.T) {
 	require.Equal(t, []any{"users", "admin"}, op["tags"])
 
 	responses := op["responses"].(map[string]any)
-	require.Contains(t, responses, "200")
+	require.NotContains(t, responses, "200")
 	created := responses["201"].(map[string]any)
 	require.Equal(t, "Created", created["description"])
 	schema := created["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
 	require.Equal(t, "#/components/schemas/openapi_test_documentedUserResponse", schema["$ref"])
+}
+
+func TestGenerateExplicitSuccessResponseSuppressesInferredGenericWrapperResponse(t *testing.T) {
+	engine := fox.New()
+	engine.POST("/status-users", createDocumentedUserWithStatus)
+
+	g := openapi.New(engine,
+		openapi.Info("Fox Test API", "1.0.0"),
+		openapi.Source([]string{"./..."}, openapi.IncludeTestFiles()),
+		openapi.Operation("POST", "/status-users",
+			openapi.Response(201, documentedUserResponse{}, "Created"),
+		),
+	)
+
+	data, err := g.JSON()
+	require.NoError(t, err)
+
+	var spec map[string]any
+	require.NoError(t, json.Unmarshal(data, &spec))
+
+	op := spec["paths"].(map[string]any)["/status-users"].(map[string]any)["post"].(map[string]any)
+	responses := op["responses"].(map[string]any)
+	require.NotContains(t, responses, "200")
+	require.Contains(t, responses, "default")
+
+	created := responses["201"].(map[string]any)
+	schema := created["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
+	require.Equal(t, "#/components/schemas/openapi_test_documentedUserResponse", schema["$ref"])
+
+	schemas := spec["components"].(map[string]any)["schemas"].(map[string]any)
+	for name := range schemas {
+		require.NotContains(t, name, "statusResponse")
+	}
+}
+
+func TestGenerateInfersStatusResponseWrapperFromSource(t *testing.T) {
+	engine := fox.New()
+	engine.POST("/status-users", createDocumentedUserWithStatus)
+
+	g := openapi.New(engine,
+		openapi.Info("Fox Test API", "1.0.0"),
+		openapi.Source([]string{"./..."}, openapi.IncludeTestFiles()),
+	)
+
+	data, err := g.JSON()
+	require.NoError(t, err)
+
+	var spec map[string]any
+	require.NoError(t, json.Unmarshal(data, &spec))
+
+	op := spec["paths"].(map[string]any)["/status-users"].(map[string]any)["post"].(map[string]any)
+	responses := op["responses"].(map[string]any)
+	require.NotContains(t, responses, "200")
+	require.Contains(t, responses, "default")
+
+	created := responses["201"].(map[string]any)
+	require.Equal(t, "Created", created["description"])
+	schema := created["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
+	require.Equal(t, "#/components/schemas/openapi_test_documentedUserResponse", schema["$ref"])
+
+	schemas := spec["components"].(map[string]any)["schemas"].(map[string]any)
+	for name := range schemas {
+		require.NotContains(t, name, "statusResponse")
+	}
 }
 
 func TestGenerateAppliesSecuritySchemes(t *testing.T) {

@@ -124,12 +124,36 @@ func (g *Generator) applyOperationDoc(op *openapi3.Operation, routeMethod, route
 	g.applyDoc(op, doc)
 }
 
+func (g *Generator) hasExplicitSuccessResponse(routeMethod, routePath string) bool {
+	for _, group := range g.groups {
+		if groupMatchesRoute(group.Prefix, routePath) && hasSuccessResponse(group.Doc) {
+			return true
+		}
+	}
+
+	doc, ok := g.operations[operationKey{Method: strings.ToUpper(routeMethod), Path: routePath}]
+	return ok && hasSuccessResponse(doc)
+}
+
 func (g *Generator) applyGroupDocs(op *openapi3.Operation, routePath string) {
 	for _, group := range g.groups {
-		if group.Prefix == "" || routePath == group.Prefix || strings.HasPrefix(routePath, strings.TrimRight(group.Prefix, "/")+"/") {
+		if groupMatchesRoute(group.Prefix, routePath) {
 			g.applyDoc(op, group.Doc)
 		}
 	}
+}
+
+func groupMatchesRoute(prefix, routePath string) bool {
+	return prefix == "" || routePath == prefix || strings.HasPrefix(routePath, strings.TrimRight(prefix, "/")+"/")
+}
+
+func hasSuccessResponse(doc operationDoc) bool {
+	for status := range doc.Responses {
+		if status >= 200 && status < 300 {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Generator) applyDoc(op *openapi3.Operation, doc operationDoc) {

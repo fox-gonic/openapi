@@ -5,7 +5,9 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -17,17 +19,19 @@ import (
 // Field lookup is keyed by (typeName, fieldName) — typeName uses the package
 // name as it appears in source (the runtime PkgPath last segment).
 type commentDocs struct {
-	funcsByQualified map[string]string
-	funcsByShort     map[string]string
-	fieldsByType     map[string]map[string]string
-	includeTests     bool
+	funcsByQualified  map[string]string
+	funcsByShort      map[string]string
+	statusByQualified map[string]int
+	fieldsByType      map[string]map[string]string
+	includeTests      bool
 }
 
 func newCommentDocs() *commentDocs {
 	return &commentDocs{
-		funcsByQualified: make(map[string]string),
-		funcsByShort:     make(map[string]string),
-		fieldsByType:     make(map[string]map[string]string),
+		funcsByQualified:  make(map[string]string),
+		funcsByShort:      make(map[string]string),
+		statusByQualified: make(map[string]int),
+		fieldsByType:      make(map[string]map[string]string),
 	}
 }
 
@@ -118,21 +122,18 @@ func (d *commentDocs) loadDir(dir string) error {
 }
 
 func (d *commentDocs) addFile(pkgName string, file *ast.File) {
+	imports := importAliases(file)
 	for _, decl := range file.Decls {
 		switch decl := decl.(type) {
 		case *ast.FuncDecl:
-			d.addFunc(pkgName, decl)
+			d.addFunc(pkgName, decl, imports)
 		case *ast.GenDecl:
 			d.addTypeDecl(decl)
 		}
 	}
 }
 
-func (d *commentDocs) addFunc(pkgName string, decl *ast.FuncDecl) {
-	if decl.Doc == nil {
-		return
-	}
-	text := commentText(decl.Doc)
+func (d *commentDocs) addFunc(pkgName string, decl *ast.FuncDecl, imports map[string]string) {
 	short := decl.Name.Name
 	qualified := pkgName + "." + short
 	if decl.Recv != nil && len(decl.Recv.List) > 0 {
@@ -141,9 +142,40 @@ func (d *commentDocs) addFunc(pkgName string, decl *ast.FuncDecl) {
 			qualified = pkgName + "." + recv + "." + short
 		}
 	}
-	d.funcsByQualified[qualified] = text
-	// Short name is best-effort fallback — last writer wins on collision.
-	d.funcsByShort[short] = text
+
+	if decl.Doc != nil {
+		text := commentText(decl.Doc)
+		d.funcsByQualified[qualified] = text
+		// Short name is best-effort fallback — last writer wins on collision.
+		d.funcsByShort[short] = text
+	}
+
+	if status, ok := inferredReturnStatus(decl, imports); ok {
+		d.statusByQualified[qualified] = status
+	}
+}
+
+func importAliases(file *ast.File) map[string]string {
+	imports := make(map[string]string)
+	for _, spec := range file.Imports {
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			continue
+		}
+		name := ""
+		if spec.Name != nil {
+			name = spec.Name.Name
+		}
+		if name == "" {
+			if idx := strings.LastIndex(path, "/"); idx >= 0 {
+				name = path[idx+1:]
+			} else {
+				name = path
+			}
+		}
+		imports[name] = path
+	}
+	return imports
 }
 
 func receiverName(expr ast.Expr) string {
@@ -218,6 +250,17 @@ func (d *commentDocs) funcDoc(runtimeName string) string {
 	return d.funcsByShort[short]
 }
 
+func (d *commentDocs) returnStatus(runtimeName string) (int, bool) {
+	if d == nil || runtimeName == "" {
+		return 0, false
+	}
+	qualified := normalizeRuntimeFuncName(runtimeName)
+	if status, ok := d.statusByQualified[qualified]; ok {
+		return status, true
+	}
+	return 0, false
+}
+
 func (d *commentDocs) fieldDoc(typeName, fieldName string) string {
 	if d == nil {
 		return ""
@@ -266,4 +309,105 @@ func firstParagraph(text string) string {
 		return text[:idx]
 	}
 	return text
+}
+
+func inferredReturnStatus(decl *ast.FuncDecl, imports map[string]string) (int, bool) {
+	if decl.Body == nil {
+		return 0, false
+	}
+
+	status := 0
+	found := false
+	conflict := false
+	ast.Inspect(decl.Body, func(node ast.Node) bool {
+		if conflict {
+			return false
+		}
+		if _, ok := node.(*ast.FuncLit); ok {
+			return false
+		}
+		ret, ok := node.(*ast.ReturnStmt)
+		if !ok {
+			return true
+		}
+		next, ok := statusReturn(ret, imports)
+		if !ok {
+			return true
+		}
+		if !found {
+			status = next
+			found = true
+			return true
+		}
+		if status != next {
+			conflict = true
+			return false
+		}
+		return true
+	})
+	return status, found && !conflict
+}
+
+func statusReturn(ret *ast.ReturnStmt, imports map[string]string) (int, bool) {
+	if len(ret.Results) == 0 {
+		return 0, false
+	}
+	if len(ret.Results) > 1 {
+		last, ok := ret.Results[len(ret.Results)-1].(*ast.Ident)
+		if !ok || last.Name != "nil" {
+			return 0, false
+		}
+	}
+	call, ok := ret.Results[0].(*ast.CallExpr)
+	if !ok || len(call.Args) == 0 {
+		return 0, false
+	}
+	return httpStatusValue(call.Args[0], imports)
+}
+
+func httpStatusValue(expr ast.Expr, imports map[string]string) (int, bool) {
+	switch expr := expr.(type) {
+	case *ast.BasicLit:
+		if expr.Kind != token.INT {
+			return 0, false
+		}
+		value, err := strconv.Atoi(expr.Value)
+		if err != nil || value < 200 || value >= 300 {
+			return 0, false
+		}
+		return value, true
+	case *ast.SelectorExpr:
+		ident, ok := expr.X.(*ast.Ident)
+		if !ok || imports[ident.Name] != "net/http" {
+			return 0, false
+		}
+		return httpStatusConstant(expr.Sel.Name)
+	}
+	return 0, false
+}
+
+func httpStatusConstant(name string) (int, bool) {
+	switch name {
+	case "StatusOK":
+		return http.StatusOK, true
+	case "StatusCreated":
+		return http.StatusCreated, true
+	case "StatusAccepted":
+		return http.StatusAccepted, true
+	case "StatusNonAuthoritativeInfo":
+		return http.StatusNonAuthoritativeInfo, true
+	case "StatusNoContent":
+		return http.StatusNoContent, true
+	case "StatusResetContent":
+		return http.StatusResetContent, true
+	case "StatusPartialContent":
+		return http.StatusPartialContent, true
+	case "StatusMultiStatus":
+		return http.StatusMultiStatus, true
+	case "StatusAlreadyReported":
+		return http.StatusAlreadyReported, true
+	case "StatusIMUsed":
+		return http.StatusIMUsed, true
+	}
+	return 0, false
 }

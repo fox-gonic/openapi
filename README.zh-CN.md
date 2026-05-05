@@ -208,6 +208,12 @@ func ConfigureOpenAPI() []openapi.Option {
 metadataHook: github.com/acme/myapp/internal/openapimeta.ConfigureOpenAPI
 ```
 
+显式成功响应会覆盖根据 handler 返回值推断出的默认成功响应。对于
+`return statusResponse(http.StatusCreated, UserResponse{}), nil` 这类简单状态码
+wrapper，`Source` 可以从 return 语句推断响应状态码，并使用 wrapper payload 类型作为
+响应 schema。因此大多数 handler 不需要为了声明 `201` 或 `202` 响应额外编写
+metadata hook。
+
 ## Library 用法
 
 Library mount API 适合开发阶段实验，但生产 artifact 推荐使用 CLI 生成。

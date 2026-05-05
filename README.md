@@ -239,6 +239,13 @@ Then configure it:
 metadataHook: github.com/acme/myapp/internal/openapimeta.ConfigureOpenAPI
 ```
 
+Explicit success responses override the default success response inferred from
+the handler return type. For simple status wrapper helpers such as
+`return statusResponse(http.StatusCreated, UserResponse{}), nil`, `Source`
+can infer the response status from the return statement and use the wrapper's
+payload type as the response schema, so most handlers do not need a metadata
+hook just to document `201` or `202` responses.
+
 ## Library Usage
 
 The library mount API is useful for dev-time experiments, but the CLI is
