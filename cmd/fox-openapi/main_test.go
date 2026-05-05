@@ -11,6 +11,31 @@ import (
 	"github.com/fox-gonic/openapi/internal/cli"
 )
 
+func TestResolveVersionPrefersLdflagsValue(t *testing.T) {
+	orig := version
+	defer func() { version = orig }()
+	version = "v9.9.9-test"
+	if got := resolveVersion(); got != "v9.9.9-test" {
+		t.Fatalf("resolveVersion() = %q, want %q", got, "v9.9.9-test")
+	}
+}
+
+func TestResolveVersionFallsBackToBuildInfo(t *testing.T) {
+	orig := version
+	defer func() { version = orig }()
+	version = ""
+	// `go test` runs against the working module — Main.Version is "(devel)"
+	// and vcs.revision is populated. The expected outcome is therefore the
+	// short revision (with optional +dirty), or "dev" if VCS info is absent.
+	got := resolveVersion()
+	if got == "" {
+		t.Fatal("resolveVersion() returned empty string")
+	}
+	if got == "(devel)" {
+		t.Fatalf("resolveVersion() leaked the (devel) sentinel")
+	}
+}
+
 func parseCommon(name string, args []string) (cli.Config, int) {
 	opts := newCommonOptions()
 	cmd := &cobra.Command{

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -14,7 +15,11 @@ import (
 	"github.com/fox-gonic/openapi/internal/cli"
 )
 
-var version = "dev"
+// version is overridable at link time via -ldflags "-X main.version=...".
+// When unset (the common `go install module@vX.Y.Z` path), resolveVersion
+// falls back to runtime/debug.ReadBuildInfo so the binary reports the tag
+// the user actually installed.
+var version = ""
 
 type exitError struct {
 	code int
@@ -210,9 +215,49 @@ func newVersionCommand() *cobra.Command {
 		Short: "Print fox-openapi version",
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println(version)
+			fmt.Println(resolveVersion())
 		},
 	}
+}
+
+// resolveVersion picks the most authoritative version string available:
+//  1. -ldflags "-X main.version=..." (release builds, CI artifacts).
+//  2. Module version from runtime/debug — populated when the binary was
+//     installed via `go install module@vX.Y.Z` or built from a tagged
+//     module cache.
+//  3. VCS revision (+dirty) recorded in build info for source builds.
+//  4. "dev" for builds with no metadata at all.
+func resolveVersion() string {
+	if version != "" {
+		return version
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+	var revision, modified string
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			revision = s.Value
+		case "vcs.modified":
+			modified = s.Value
+		}
+	}
+	if revision != "" {
+		short := revision
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		if modified == "true" {
+			return short + "+dirty"
+		}
+		return short
+	}
+	return "dev"
 }
 
 type commonOptions struct {
