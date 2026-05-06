@@ -48,18 +48,20 @@ func TestStatusWrapperExampleGeneratesOAPICodegenFriendlyResponses(t *testing.T)
 	}
 
 	tmp := t.TempDir()
-	specPath := filepath.Join(tmp, "openapi.yaml")
+	tmpExampleDir := filepath.Join(tmp, "status-wrapper-oapi-codegen")
+	if err := os.CopyFS(tmpExampleDir, os.DirFS(exampleDir)); err != nil {
+		t.Fatal(err)
+	}
+	specPath := filepath.Join(tmpExampleDir, "api", "openapi.yaml")
 	if err := os.WriteFile(specPath, spec, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	generatedPath := filepath.Join(tmp, "sandbox.gen.go")
+	generatedPath := filepath.Join(tmpExampleDir, "internal", "apis", "sandbox.gen.go")
 	cmd := exec.Command("go", "run", "github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1",
-		"-generate", "types,client",
-		"-package", "apis",
-		"-o", generatedPath,
-		specPath,
+		"--config", "oapi-codegen.yaml",
+		"api/openapi.yaml",
 	)
-	cmd.Dir = openapiRoot
+	cmd.Dir = tmpExampleDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("oapi-codegen: %v\n%s", err, out)
