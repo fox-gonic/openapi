@@ -36,6 +36,7 @@ type Config struct {
 	SecuritySchemes  map[string]Scheme `yaml:"securitySchemes"`
 	MetadataHook     string            `yaml:"metadataHook"`
 	EntryConfig      EntryConfig       `yaml:"entryConfig"`
+	RouteManifest    string            `yaml:"routeManifest"`
 	Workdir          string            `yaml:"workdir"`
 	KeepDriver       bool              `yaml:"keepDriver"`
 	Verbose          bool              `yaml:"verbose"`
@@ -133,6 +134,8 @@ type Overrides struct {
 	EntryConfigLoaderSet bool
 	EntryConfigPath      string
 	EntryConfigPathSet   bool
+	RouteManifest        string
+	RouteManifestSet     bool
 	Workdir              string
 	WorkdirSet           bool
 	KeepDriver           bool
@@ -214,7 +217,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if cfg.Format != FormatYAML && cfg.Format != FormatJSON {
 		return Config{}, fmt.Errorf("format must be yaml or json, got %q", cfg.Format)
 	}
-	if cfg.Entry == "" {
+	if cfg.Entry == "" && cfg.RouteManifest == "" {
 		// Discovery scope: explicit position arg > Sources > "./..." default.
 		// Comment extraction (Sources) stays module-wide so referenced types
 		// keep their field docs.
@@ -334,6 +337,9 @@ func mergeFromFile(cfg *Config, fileCfg Config, configDir string) {
 	if fileCfg.EntryConfig.Path != "" {
 		cfg.EntryConfig.Path = resolveRelative(configDir, fileCfg.EntryConfig.Path)
 	}
+	if fileCfg.RouteManifest != "" {
+		cfg.RouteManifest = resolveRelative(configDir, fileCfg.RouteManifest)
+	}
 	if fileCfg.Workdir != "" {
 		cfg.Workdir = resolveRelative(configDir, fileCfg.Workdir)
 	}
@@ -391,6 +397,9 @@ func applyOverrides(cfg *Config, o Overrides, cwd string) {
 	}
 	if o.EntryConfigPathSet {
 		cfg.EntryConfig.Path = resolveRelative(cwd, o.EntryConfigPath)
+	}
+	if o.RouteManifestSet {
+		cfg.RouteManifest = resolveRelative(cwd, o.RouteManifest)
 	}
 	if o.WorkdirSet {
 		cfg.Workdir = resolveRelative(cwd, o.Workdir)

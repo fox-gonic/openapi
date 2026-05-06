@@ -10,11 +10,13 @@ import (
 )
 
 type Entry struct {
-	ImportPath   string
-	FuncName     string
-	ReturnsError bool
-	TakesContext bool
-	TakesConfig  bool
+	ImportPath       string
+	FuncName         string
+	ReturnsError     bool
+	TakesContext     bool
+	TakesConfig      bool
+	ConfigImportPath string
+	ConfigTypeName   string
 }
 
 type Hook struct {
@@ -45,11 +47,13 @@ func ResolveEntry(workdir, value string) (Entry, error) {
 		return Entry{}, entrySignatureError(value)
 	}
 	return Entry{
-		ImportPath:   importPath,
-		FuncName:     funcName,
-		TakesContext: shape.takesContext,
-		TakesConfig:  shape.takesConfig,
-		ReturnsError: shape.returnsError,
+		ImportPath:       importPath,
+		FuncName:         funcName,
+		TakesContext:     shape.takesContext,
+		TakesConfig:      shape.takesConfig,
+		ConfigImportPath: shape.configImportPath,
+		ConfigTypeName:   shape.configTypeName,
+		ReturnsError:     shape.returnsError,
 	}, nil
 }
 
@@ -58,9 +62,11 @@ func ResolveEntry(workdir, value string) (Entry, error) {
 // entryFromFunc (auto-discovery) share matchEntrySignature so the list
 // of supported shapes lives in a single place.
 type entrySignatureShape struct {
-	takesContext bool
-	takesConfig  bool
-	returnsError bool
+	takesContext     bool
+	takesConfig      bool
+	configImportPath string
+	configTypeName   string
+	returnsError     bool
 }
 
 func matchEntrySignature(sig *types.Signature) (entrySignatureShape, bool) {
@@ -77,6 +83,12 @@ func matchEntrySignature(sig *types.Signature) (entrySignatureShape, bool) {
 	}
 	if paramCount == 2 {
 		shape.takesConfig = true
+		importPath, typeName, ok := configParamType(sig.Params().At(1).Type())
+		if !ok {
+			return shape, false
+		}
+		shape.configImportPath = importPath
+		shape.configTypeName = typeName
 	}
 	results := sig.Results()
 	switch results.Len() {
@@ -96,6 +108,10 @@ func matchEntrySignature(sig *types.Signature) (entrySignatureShape, bool) {
 }
 
 func ResolveConfigLoader(workdir, value, path string) (ConfigLoader, error) {
+	return resolveConfigLoader(workdir, value, path, "", "")
+}
+
+func resolveConfigLoader(workdir, value, path, wantImportPath, wantTypeName string) (ConfigLoader, error) {
 	importPath, funcName, err := splitSymbol(value)
 	if err != nil {
 		return ConfigLoader{}, err
@@ -112,10 +128,27 @@ func ResolveConfigLoader(workdir, value, path string) (ConfigLoader, error) {
 		sig.Results().Len() != 2 || !isErrorType(sig.Results().At(1).Type()) {
 		return ConfigLoader{}, fmt.Errorf("entry config loader signature mismatch for %s: expected func(string) (*Config, error)", value)
 	}
+	if wantImportPath != "" || wantTypeName != "" {
+		gotImportPath, gotTypeName, ok := configParamType(sig.Results().At(0).Type())
+		if !ok || gotImportPath != wantImportPath || gotTypeName != wantTypeName {
+			return ConfigLoader{}, fmt.Errorf("entry config loader signature mismatch for %s: expected func(string) (*%s.%s, error)", value, wantImportPath, wantTypeName)
+		}
+	}
 	if path != "" && !filepath.IsAbs(path) {
 		path = filepath.Join(workdir, path)
 	}
 	return ConfigLoader{ImportPath: importPath, FuncName: funcName, Path: path}, nil
+}
+
+func ResolveConfigLoaderFromEntry(workdir string, entry Entry, path string) (ConfigLoader, error) {
+	if !entry.TakesConfig || entry.ConfigImportPath == "" || entry.ConfigTypeName == "" {
+		return ConfigLoader{}, fmt.Errorf("entry %s.%s does not expose a concrete config type", entry.ImportPath, entry.FuncName)
+	}
+	loader, err := resolveConfigLoader(workdir, entry.ConfigImportPath+".Load", path, entry.ConfigImportPath, entry.ConfigTypeName)
+	if err != nil {
+		return ConfigLoader{}, err
+	}
+	return loader, nil
 }
 
 func ResolveHook(workdir, value string) (Hook, error) {
@@ -188,6 +221,18 @@ func isContextType(typ types.Type) bool {
 	}
 	pkg := named.Obj().Pkg()
 	return pkg != nil && pkg.Path() == "context"
+}
+
+func configParamType(typ types.Type) (string, string, bool) {
+	ptr, ok := typ.(*types.Pointer)
+	if !ok {
+		return "", "", false
+	}
+	named, ok := ptr.Elem().(*types.Named)
+	if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
+		return "", "", false
+	}
+	return named.Obj().Pkg().Path(), named.Obj().Name(), true
 }
 
 func isStringType(typ types.Type) bool {

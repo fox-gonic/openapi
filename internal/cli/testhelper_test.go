@@ -75,6 +75,7 @@ replace github.com/fox-gonic/openapi => `+filepath.ToSlash(openapiRoot)+`
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 
 	"github.com/fox-gonic/fox"
@@ -92,9 +93,39 @@ type User struct {
 	Name string `+"`json:\"name\"`"+`
 }
 
+type GenericResponse[T any] struct {
+	Data T `+"`json:\"data\"`"+`
+}
+
+type Handler struct{}
+
+type GenericHandler[T any] struct{}
+
+type AliasHandler = Handler
+
 // GetUser fetches a user by id.
 func GetUser(ctx *fox.Context, req GetUserRequest) (User, error) {
 	return User{ID: req.ID, Name: "Ada"}, nil
+}
+
+func GetGenericUser(ctx *fox.Context) (GenericResponse[User], error) {
+	return GenericResponse[User]{Data: User{ID: "1", Name: "Ada"}}, nil
+}
+
+func GetGenericRuntimeUser[T any](ctx *fox.Context) (GenericResponse[T], error) {
+	return GenericResponse[T]{}, nil
+}
+
+func (h *Handler) AliasUser(ctx *fox.Context) (User, error) {
+	return User{ID: "1", Name: "Ada"}, nil
+}
+
+func (h Handler) ValueUser(ctx *fox.Context) (User, error) {
+	return User{ID: "1", Name: "Ada"}, nil
+}
+
+func (h GenericHandler[T]) GenericUser(ctx *fox.Context) (GenericResponse[T], error) {
+	return GenericResponse[T]{}, nil
 }
 
 func NewEngine() *fox.Engine {
@@ -113,6 +144,15 @@ func NewEngineWithContext(ctx context.Context) (*fox.Engine, error) {
 
 func NewEngineWithConfig(ctx context.Context, cfg *config.Config) (*fox.Engine, error) {
 	return NewEngine(), nil
+}
+
+func NewEngineWithRequiredConfig(ctx context.Context, cfg *config.Config) (*fox.Engine, error) {
+	if cfg == nil {
+		return nil, errors.New("config is required")
+	}
+	e := NewEngine()
+	e.GET(fmt.Sprintf("/configured/%s", cfg.Name), GetUser)
+	return e, nil
 }
 
 func NewEngineWithConfigNoError(ctx context.Context, cfg *config.Config) *fox.Engine {
@@ -141,7 +181,7 @@ type Config struct {
 }
 
 func Load(path string) (*Config, error) {
-	return &Config{Name: path}, nil
+	return &Config{Name: "loaded"}, nil
 }
 `)
 	cmd := exec.Command("go", "mod", "tidy")

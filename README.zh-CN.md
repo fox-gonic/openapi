@@ -70,6 +70,32 @@ metadata 时，才需要使用 `fox-openapi init` 创建配置文件。
 
 CLI 会构建一个隔离的临时 driver。基础生成场景下，业务模块不需要 `tools.go` 文件，也不需要提交直接的 `github.com/fox-gonic/openapi` 依赖；driver 构建会解析这个临时依赖，并在结束后恢复 `go.mod` / `go.sum`。只有业务代码自己 import OpenAPI metadata hook 或 library API 时，才需要直接声明依赖。
 
+也可以让 Fox 应用先导出 route manifest，再由 fox-openapi 读取这个文件：
+
+```go
+if *routeManifestPath != "" {
+	if err := fox.WriteRouteManifest(engine, *routeManifestPath); err != nil {
+		log.Fatal(err)
+	}
+	return
+}
+```
+
+```yaml
+routeManifest: api/routes.manifest.json
+```
+
+```bash
+# 先让业务应用写入或刷新 manifest。
+myapp --openapi-route-manifest api/routes.manifest.json
+
+# 再让 fox-openapi 读取 manifest 并写出 OpenAPI 文档。
+fox-openapi generate --route-manifest api/routes.manifest.json --out api/openapi.yaml
+```
+
+Manifest 模式不会运行应用 entry，也不会更新 manifest 文件。它会使用已有 manifest
+中的方法、路径、handler 标识、path 参数、operationId、request / response schema，并继续结合源码注释补全文档。
+
 ## Entry 函数
 
 `entry` 必须指向一个导出函数，并符合以下签名之一：
@@ -83,15 +109,26 @@ func NewEngine(context.Context, *Config) *fox.Engine
 func NewEngine(context.Context, *Config) (*fox.Engine, error)
 ```
 
-对于接收配置的 entry，可以省略 `entryConfig`，此时 CLI 会把配置参数传为 `nil`；也可以提供一个配置 loader：
+对于接收配置的 entry，提供 `entryConfig.path` 后，fox-openapi 会优先在 entry
+的配置类型所在包中自动使用包级 `Load(string) (*Config, error)` 函数：
 
 ```yaml
 entryConfig:
-  loader: github.com/acme/myapp/internal/config.Load
   path: config.yaml
 ```
 
-传入 `nil` 可以让生产代码和 OpenAPI 生成共用同一个路由注册入口，同时避免初始化数据库或外部服务。
+只有当 loader 不是标准 `Load`，或不在配置类型所在包中时，才需要显式指定
+`entryConfig.loader`：
+
+```yaml
+entryConfig:
+  loader: github.com/acme/myapp/internal/config.LoadForOpenAPI
+  path: config.yaml
+```
+
+这样 OpenAPI 生成可以直接复用正常的生产
+`NewEngine(context.Context, *Config)`，不需要为了工具额外添加 route-only 分支。
+为了兼容已有项目，完全省略 `entryConfig` 时，fox-openapi 仍会传入 `nil`。
 
 ## 路径解析
 

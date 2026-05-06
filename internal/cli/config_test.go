@@ -87,6 +87,25 @@ func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRouteManifestDoesNotRequireEntry(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "fox-openapi.yaml")
+	if err := os.WriteFile(configPath, []byte(`
+routeManifest: api/routes.manifest.json
+out: api/openapi.yaml
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(Overrides{ConfigPath: configPath, ConfigExplicit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Entry != "" || cfg.RouteManifest != filepath.Join(dir, "api/routes.manifest.json") {
+		t.Fatalf("unexpected config: entry=%q routeManifest=%q", cfg.Entry, cfg.RouteManifest)
+	}
+}
+
 func TestLoadConfigInvalidFormat(t *testing.T) {
 	_, err := LoadConfig(Overrides{
 		Entry:     "example.com/app.NewEngine",
