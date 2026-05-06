@@ -1,0 +1,7 @@
+package: apis
+output: internal/apis/sandbox.gen.go
+generate:
+  models: true
+  client: true
+output-options:
+  name-normalizer: ToCamelCaseWithInitialisms

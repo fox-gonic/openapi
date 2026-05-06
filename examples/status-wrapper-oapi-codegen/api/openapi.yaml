@@ -1,0 +1,101 @@
+components:
+  responses:
+    HTTPError:
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/HTTPError"
+      description: Error response
+  schemas:
+    HTTPError:
+      additionalProperties: true
+      properties:
+        code:
+          type: string
+        error:
+          type: string
+      required:
+      - code
+      - error
+      type: object
+    handler_SandboxResponse:
+      properties:
+        client_id:
+          description: ClientID identifies this platform to SDK clients.
+          type: string
+        sandbox_id:
+          description: SandboxID is the sandbox instance ID.
+          type: string
+        template_id:
+          description: TemplateID is the template used by the sandbox.
+          type: string
+      type: object
+    handler_TemplateResponse:
+      properties:
+        build_id:
+          description: BuildID is the latest template build ID.
+          type: string
+        name:
+          description: Name is the template name.
+          type: string
+        template_id:
+          description: TemplateID is the template ID.
+          type: string
+      type: object
+info:
+  title: Status Wrapper OAPI Codegen Example
+  version: 1.0.0
+openapi: 3.0.3
+paths:
+  /api/v1/sbx/sandboxes:
+    post:
+      description: CreateSandbox creates a sandbox from a template.
+      operationId: github_com_fox_gonic_openapi_examples_status_wrapper_oapi_codegen_internal_handler_CreateSandbox
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                template_id:
+                  description: TemplateID selects the template used to create the sandbox.
+                  type: string
+              required:
+              - template_id
+              type: object
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/handler_SandboxResponse"
+          description: Created
+        default:
+          $ref: "#/components/responses/HTTPError"
+      summary: CreateSandbox creates a sandbox from a template.
+  /api/v1/sbx/templates:
+    post:
+      description: CreateTemplate creates a template build request.
+      operationId: github_com_fox_gonic_openapi_examples_status_wrapper_oapi_codegen_internal_handler_CreateTemplate
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                name:
+                  description: Name is the template name.
+                  type: string
+              required:
+              - name
+              type: object
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/handler_TemplateResponse"
+          description: Accepted
+        default:
+          $ref: "#/components/responses/HTTPError"
+      summary: CreateTemplate creates a template build request.

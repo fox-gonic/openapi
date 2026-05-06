@@ -1,0 +1,8 @@
+entry: github.com/fox-gonic/openapi/examples/status-wrapper-oapi-codegen/internal/handler.NewEngine
+out: api/openapi.yaml
+format: yaml
+sources:
+  - ./internal/handler
+info:
+  title: Status Wrapper OAPI Codegen Example
+  version: 1.0.0
