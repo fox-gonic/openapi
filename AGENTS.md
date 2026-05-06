@@ -55,7 +55,8 @@ and reproducible downstream verification.
 
 - Run `go test ./...` in this repository before claiming generator work is done.
 - For CLI behavior, test both the compatibility path and the preferred path when
-  applicable, for example root `fox-openapi` generation and `generate`.
+  applicable, for example both the root `fox-openapi` command and the `generate`
+  subcommand.
 - For response inference changes, include tests that cover explicit metadata,
   inferred wrapper status, no-body success statuses, and ambiguous wrappers.
 - For downstream validation, check the generated OpenAPI for both absence of
@@ -70,9 +71,10 @@ and reproducible downstream verification.
 
 - When releasing generator behavior needed by another repository, tag and push a
   version before regenerating downstream specs with
-  `go run github.com/fox-gonic/openapi/cmd/fox-openapi@version`.
+  `go run github.com/fox-gonic/openapi/cmd/fox-openapi@vX.Y.Z`.
 - In downstream PRs, mention the generator version and the exact contract change
-  being applied, such as `201 -> SandboxResponse` or `202 -> TemplateResponse`.
+  being applied, such as `200 -> 201 (SandboxResponse)` or
+  `200 -> 202 (TemplateResponse)`.
 - Do not manually rename generated schema names in committed specs as the only
   fix. Change generator behavior first, then regenerate.
 - If a downstream repository already has a large unrelated OpenAPI or SDK diff,
