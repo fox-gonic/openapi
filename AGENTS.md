@@ -69,7 +69,8 @@ and reproducible downstream verification.
 ## Downstream Coordination
 
 - When releasing generator behavior needed by another repository, tag and push a
-  version before regenerating downstream specs with `go run module@version`.
+  version before regenerating downstream specs with
+  `go run github.com/fox-gonic/openapi/cmd/fox-openapi@version`.
 - In downstream PRs, mention the generator version and the exact contract change
   being applied, such as `201 -> SandboxResponse` or `202 -> TemplateResponse`.
 - Do not manually rename generated schema names in committed specs as the only
