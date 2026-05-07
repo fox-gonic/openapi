@@ -51,6 +51,70 @@ func TestRunPipelineGeneratesSpecFromUserModule(t *testing.T) {
 	}
 }
 
+func TestRunPipelineGeneratesSpecFromRouteManifest(t *testing.T) {
+	dir := writeUserModule(t)
+	manifestPath := filepath.Join(dir, "routes.manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(`{
+  "version": "fox.route-manifest/v1",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/users/:id",
+      "handler": "example.com/app/internal/server.GetUser"
+    }
+  ]
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Config{
+		RouteManifest: manifestPath,
+		Out:           "api/openapi.yaml",
+		Format:        "yaml",
+		Sources:       []string{},
+		Info:          InfoConfig{Title: "Manifest API", Version: "1.0.0"},
+		Workdir:       dir,
+	}
+	data, warnings, err := RunPipeline(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+	for _, want := range []string{
+		"title: Manifest API",
+		"/users/{id}:",
+		"operationId: example_com_app_internal_server_GetUser",
+		"name: id",
+		"server_User",
+		"default:",
+	} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("generated spec missing %q:\n%s", want, data)
+		}
+	}
+}
+
+func TestRunPipelineRejectsUnsupportedRouteManifestVersion(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "routes.manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(`{"version":"fox.route-manifest/v0","routes":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := RunPipeline(Config{
+		RouteManifest: manifestPath,
+		Out:           "api/openapi.yaml",
+		Format:        "yaml",
+		Info:          InfoConfig{Title: "Manifest API", Version: "1.0.0"},
+		Workdir:       dir,
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported route manifest version") {
+		t.Fatalf("RunPipeline error = %v, want unsupported route manifest version", err)
+	}
+}
+
 func TestRunPipelineDoesNotRequireOpenAPIModuleInUserGoMod(t *testing.T) {
 	dir := writeUserModuleWithoutOpenAPIRequire(t)
 	before, err := os.ReadFile(filepath.Join(dir, "go.mod"))
@@ -102,6 +166,28 @@ func TestRunPipelineSupportsContextAndConfigEntry(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte("/users/{id}:")) {
 		t.Fatalf("generated spec missing route:\n%s", data)
+	}
+}
+
+func TestRunPipelineAutoDiscoversConfigLoaderFromEntryConfigPath(t *testing.T) {
+	dir := writeUserModule(t)
+	cfg := Config{
+		Entry:   "example.com/app/internal/server.NewEngineWithRequiredConfig",
+		Out:     "api/openapi.yaml",
+		Format:  "yaml",
+		Sources: []string{"./internal/server"},
+		Info:    InfoConfig{Title: "Example API", Version: "1.0.0"},
+		EntryConfig: EntryConfig{
+			Path: "config.yaml",
+		},
+		Workdir: dir,
+	}
+	data, _, err := RunPipeline(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte("/configured/loaded:")) {
+		t.Fatalf("generated spec missing route registered by configured engine:\n%s", data)
 	}
 }
 

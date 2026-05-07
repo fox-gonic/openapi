@@ -27,17 +27,20 @@ type Option func(*Generator)
 // next Spec()/JSON()/YAML() call. Schemas are cached across regenerations so
 // repeated calls only re-walk the route table.
 type Generator struct {
-	engine       *fox.Engine
-	spec         *openapi3.T
-	schemaNames  map[reflect.Type]string
-	schemaByName map[string]reflect.Type
-	warnings     []string
-	docs         *commentDocs
-	operations   map[operationKey]operationDoc
-	groups       []groupDoc
-	formatters   map[reflect.Type]*openapi3.Schema
-	errorSchema  reflect.Type
-	generated    bool
+	engine               *fox.Engine
+	manifest             *RouteManifest
+	spec                 *openapi3.T
+	schemaNames          map[reflect.Type]string
+	schemaByName         map[string]reflect.Type
+	manifestSchemaNames  map[string]string
+	manifestSchemaByName map[string]string
+	warnings             []string
+	docs                 *commentDocs
+	operations           map[operationKey]operationDoc
+	groups               []groupDoc
+	formatters           map[reflect.Type]*openapi3.Schema
+	errorSchema          reflect.Type
+	generated            bool
 }
 
 // Info sets the OpenAPI info title and version.
@@ -61,11 +64,13 @@ func New(engine *fox.Engine, opts ...Option) *Generator {
 	components.Schemas = openapi3.Schemas{}
 
 	g := &Generator{
-		engine:       engine,
-		schemaNames:  make(map[reflect.Type]string),
-		schemaByName: make(map[string]reflect.Type),
-		operations:   make(map[operationKey]operationDoc),
-		formatters:   make(map[reflect.Type]*openapi3.Schema),
+		engine:               engine,
+		schemaNames:          make(map[reflect.Type]string),
+		schemaByName:         make(map[string]reflect.Type),
+		manifestSchemaNames:  make(map[string]string),
+		manifestSchemaByName: make(map[string]string),
+		operations:           make(map[operationKey]operationDoc),
+		formatters:           make(map[reflect.Type]*openapi3.Schema),
 		spec: &openapi3.T{
 			OpenAPI:    "3.0.3",
 			Info:       &openapi3.Info{Title: "Fox API", Version: "0.0.0"},
@@ -78,6 +83,14 @@ func New(engine *fox.Engine, opts ...Option) *Generator {
 		opt(g)
 	}
 
+	return g
+}
+
+// NewFromRouteManifest creates a Generator from a Fox route manifest instead
+// of a live Engine.
+func NewFromRouteManifest(manifest RouteManifest, opts ...Option) *Generator {
+	g := New(nil, opts...)
+	g.manifest = &manifest
 	return g
 }
 
@@ -97,6 +110,8 @@ func (g *Generator) Regenerate() {
 	g.warnings = nil
 	g.schemaNames = make(map[reflect.Type]string)
 	g.schemaByName = make(map[string]reflect.Type)
+	g.manifestSchemaNames = make(map[string]string)
+	g.manifestSchemaByName = make(map[string]string)
 	g.spec.Paths = openapi3.NewPaths()
 	g.spec.Components.Schemas = openapi3.Schemas{}
 	g.spec.Components.Responses = openapi3.ResponseBodies{}
@@ -145,9 +160,454 @@ func (g *Generator) WriteYAML(w io.Writer) error {
 }
 
 func (g *Generator) generate() {
+	if g.manifest != nil {
+		for _, route := range g.manifest.Routes {
+			g.generateManifestRoute(route)
+		}
+		return
+	}
 	for _, route := range g.engine.HandlerRoutes() {
 		g.generateRoute(route)
 	}
+}
+
+func (g *Generator) generateManifestRoute(route RouteManifestRoute) {
+	op := openapi3.NewOperation()
+	if route.HandlerSymbol() != "" {
+		op.OperationID = sanitizeName(cleanHandlerName(route.HandlerSymbol()))
+	} else {
+		op.OperationID = sanitizeName(route.Method + "_" + route.Path)
+	}
+	op.Responses = openapi3.NewResponses()
+	if g.docs != nil {
+		if text := g.docs.funcDoc(route.HandlerSymbol()); text != "" {
+			op.Summary = firstParagraph(text)
+			op.Description = text
+		}
+	}
+
+	if input, ok := manifestRequestBody(route); ok {
+		g.addManifestInput(op, route, input)
+	}
+	g.addMissingPathParams(op, route.Path)
+	status := http.StatusOK
+	statusInferred := false
+	if g.docs != nil {
+		if inferred, ok := g.docs.returnStatus(route.HandlerSymbol()); ok {
+			status = inferred
+			statusInferred = true
+		}
+	}
+	if body, ok := manifestSuccessBody(route); ok {
+		if statusInferred {
+			if inferred, ok := g.sourceInferredManifestSuccessBody(body); ok {
+				body = inferred
+			}
+		}
+		op.Responses.Set(strconv.Itoa(status), &openapi3.ResponseRef{Value: g.manifestSuccessResponse(status, body)})
+	} else {
+		op.Responses.Set(strconv.Itoa(status), &openapi3.ResponseRef{Value: openapi3.NewResponse().
+			WithDescription(http.StatusText(status))})
+	}
+	if manifestRouteReturnsError(route) {
+		op.Responses.Set("default", &openapi3.ResponseRef{Ref: "#/components/responses/HTTPError"})
+	}
+	g.spec.AddOperation(openAPIPath(route.Path), route.Method, op)
+}
+
+func (g *Generator) sourceInferredManifestSuccessBody(typ RouteManifestType) (RouteManifestType, bool) {
+	body, ok := manifestStatusWrapperBodyType(typ)
+	if !ok {
+		return RouteManifestType{}, false
+	}
+	return body, true
+}
+
+func (g *Generator) addManifestInput(op *openapi3.Operation, route RouteManifestRoute, typ RouteManifestType) {
+	typ = derefManifestType(typ)
+	if typ.Kind != "struct" {
+		return
+	}
+	body := openapi3.NewObjectSchema()
+	body.Properties = openapi3.Schemas{}
+	bodyMediaType := "application/json"
+	pathParams := pathParamNames(route.Path)
+
+	for _, field := range typ.Fields {
+		if field.PkgPath != "" {
+			continue
+		}
+		if name := manifestTagName(field.Tag, "uri"); name != "" {
+			if _, ok := pathParams[name]; !ok {
+				g.warnf(`%s %s: uri parameter %q does not match path parameters %s`, route.Method, route.Path, name, formatParamNames(pathParams))
+			}
+			op.AddParameter(g.manifestParameter(name, "path", true, typ, field))
+			continue
+		}
+		if name := manifestTagName(field.Tag, "query"); name != "" {
+			op.AddParameter(g.manifestParameter(name, "query", manifestHasBinding(field.Tag, "required"), typ, field))
+			continue
+		}
+		if name := manifestTagName(field.Tag, "header"); name != "" {
+			op.AddParameter(g.manifestParameter(name, "header", manifestHasBinding(field.Tag, "required"), typ, field))
+			continue
+		}
+		if manifestTagName(field.Tag, "context") != "" {
+			continue
+		}
+
+		name := manifestTagName(field.Tag, "form")
+		if name != "" {
+			bodyMediaType = "application/x-www-form-urlencoded"
+		}
+		if name == "" {
+			name = manifestTagName(field.Tag, "json")
+		}
+		if name == "" {
+			name = lowerFirst(field.Name)
+		}
+		body.Properties[name] = g.manifestFieldSchemaRef(typ, field)
+		if manifestHasBinding(field.Tag, "required") {
+			body.Required = append(body.Required, name)
+		}
+	}
+	if len(body.Properties) > 0 {
+		op.RequestBody = &openapi3.RequestBodyRef{Value: openapi3.NewRequestBody().
+			WithRequired(len(body.Required) > 0).
+			WithSchema(body, []string{bodyMediaType})}
+	}
+}
+
+func (g *Generator) manifestParameter(name, in string, required bool, owner RouteManifestType, field RouteManifestField) *openapi3.Parameter {
+	return &openapi3.Parameter{
+		Name:     name,
+		In:       in,
+		Required: required,
+		Schema:   g.manifestFieldSchemaRef(owner, field),
+	}
+}
+
+func (g *Generator) manifestFieldSchemaRef(owner RouteManifestType, field RouteManifestField) *openapi3.SchemaRef {
+	ref := g.manifestSchemaRef(field.Type)
+	if ref.Value != nil && owner.Name != "" {
+		if text := g.docs.fieldDoc(owner.Name, field.Name); text != "" {
+			ref.Value.Description = text
+		}
+	}
+	return ref
+}
+
+func (g *Generator) manifestSuccessResponse(status int, typ RouteManifestType) *openapi3.Response {
+	response := openapi3.NewResponse().WithDescription(http.StatusText(status))
+	if status == http.StatusNoContent || status == http.StatusResetContent {
+		return response
+	}
+	if derefManifestType(typ).Kind == "string" {
+		return response.WithContent(openapi3.Content{
+			"text/plain": openapi3.NewMediaType().WithSchemaRef(g.manifestSchemaRef(typ)),
+		})
+	}
+	return response.WithJSONSchemaRef(g.manifestSchemaRef(typ))
+}
+
+func (g *Generator) manifestSchemaRef(typ RouteManifestType) *openapi3.SchemaRef {
+	typ = derefManifestType(typ)
+	if typ.Kind == "struct" && !manifestIsTimeType(typ) {
+		return g.manifestComponentSchemaRef(typ)
+	}
+	return &openapi3.SchemaRef{Value: g.manifestSchema(typ)}
+}
+
+func (g *Generator) manifestComponentSchemaRef(typ RouteManifestType) *openapi3.SchemaRef {
+	key := manifestTypeKey(typ)
+	if name, ok := g.manifestSchemaNames[key]; ok {
+		return &openapi3.SchemaRef{Ref: "#/components/schemas/" + name}
+	}
+	name := g.uniqueManifestSchemaName(typ)
+	g.manifestSchemaNames[key] = name
+	g.manifestSchemaByName[name] = key
+	g.spec.Components.Schemas[name] = &openapi3.SchemaRef{Value: g.manifestObjectSchema(typ)}
+	return &openapi3.SchemaRef{Ref: "#/components/schemas/" + name}
+}
+
+func (g *Generator) uniqueManifestSchemaName(typ RouteManifestType) string {
+	short := manifestSchemaName(typ)
+	key := manifestTypeKey(typ)
+	if existing, ok := g.manifestSchemaByName[short]; !ok || existing == key {
+		return short
+	}
+	long := sanitizeName(typ.PkgPath + "_" + typ.Name)
+	if existing, ok := g.manifestSchemaByName[long]; !ok || existing == key {
+		return long
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s_%d", long, i)
+		if _, exists := g.manifestSchemaByName[candidate]; !exists {
+			return candidate
+		}
+	}
+}
+
+func scalarSchema(kind string) (*openapi3.Schema, bool) {
+	switch kind {
+	case "bool":
+		return openapi3.NewBoolSchema(), true
+	case "int", "int8", "int16", "int32", "uint", "uint8", "uint16", "uint32":
+		return openapi3.NewInt32Schema(), true
+	case "int64", "uint64":
+		return openapi3.NewInt64Schema(), true
+	case "float32":
+		schema := openapi3.NewFloat64Schema()
+		schema.Format = "float"
+		return schema, true
+	case "float64":
+		return openapi3.NewFloat64Schema(), true
+	case "string":
+		return openapi3.NewStringSchema(), true
+	}
+	return nil, false
+}
+
+func (g *Generator) manifestSchema(typ RouteManifestType) *openapi3.Schema {
+	nullable := false
+	for typ.Kind == "ptr" || typ.Kind == "pointer" {
+		nullable = true
+		if typ.Elem == nil {
+			break
+		}
+		typ = *typ.Elem
+	}
+	if manifestIsTimeType(typ) {
+		schema := openapi3.NewDateTimeSchema()
+		if nullable {
+			schema.Nullable = true
+		}
+		return schema
+	}
+	var schema *openapi3.Schema
+	if scalar, ok := scalarSchema(typ.Kind); ok {
+		schema = scalar
+	} else {
+		switch typ.Kind {
+		case "slice", "array":
+			if typ.Kind == "slice" && typ.Elem != nil && typ.Elem.Kind == "uint8" {
+				schema = openapi3.NewBytesSchema()
+				break
+			}
+			schema = openapi3.NewArraySchema()
+			if typ.Elem != nil {
+				schema.Items = g.manifestSchemaRef(*typ.Elem)
+			}
+		case "map":
+			schema = openapi3.NewObjectSchema()
+			if typ.Key != nil && typ.Key.Kind == "string" && typ.Elem != nil {
+				schema.WithAdditionalProperties(g.manifestSchema(*typ.Elem))
+			} else {
+				schema.WithAnyAdditionalProperties()
+			}
+		case "struct":
+			if manifestIsTimeType(typ) {
+				schema = openapi3.NewDateTimeSchema()
+				break
+			}
+			schema = g.manifestObjectSchema(typ)
+		case "interface":
+			schema = openapi3.NewObjectSchema().WithAnyAdditionalProperties()
+		default:
+			schema = openapi3.NewSchema()
+		}
+	}
+	if nullable {
+		schema.Nullable = true
+	}
+	return schema
+}
+
+func (g *Generator) manifestObjectSchema(typ RouteManifestType) *openapi3.Schema {
+	schema := openapi3.NewObjectSchema()
+	schema.Properties = openapi3.Schemas{}
+	for _, field := range typ.Fields {
+		if field.PkgPath != "" {
+			continue
+		}
+		name := manifestTagName(field.Tag, "json")
+		if name == "" {
+			name = lowerFirst(field.Name)
+		}
+		schema.Properties[name] = g.manifestFieldSchemaRef(typ, field)
+		if manifestHasBinding(field.Tag, "required") {
+			schema.Required = append(schema.Required, name)
+		}
+	}
+	return schema
+}
+
+func manifestTypeKey(typ RouteManifestType) string {
+	if len(typ.TypeArgs) > 0 {
+		parts := make([]string, 0, len(typ.TypeArgs))
+		for _, arg := range typ.TypeArgs {
+			parts = append(parts, manifestTypeKey(arg))
+		}
+		return typ.PkgPath + "." + typ.Name + "[" + strings.Join(parts, ",") + "]"
+	}
+	if typ.PkgPath != "" || typ.Name != "" {
+		return typ.PkgPath + "." + typ.Name
+	}
+	if typ.String != "" {
+		return typ.String
+	}
+	return manifestStructuralTypeKey(typ)
+}
+
+func manifestStructuralTypeKey(typ RouteManifestType) string {
+	var b strings.Builder
+	b.WriteString(typ.Kind)
+	if typ.Key != nil {
+		b.WriteString("{key:")
+		b.WriteString(manifestTypeKey(*typ.Key))
+		b.WriteString("}")
+	}
+	if typ.Elem != nil {
+		b.WriteString("{elem:")
+		b.WriteString(manifestTypeKey(*typ.Elem))
+		b.WriteString("}")
+	}
+	if len(typ.Fields) > 0 {
+		b.WriteString("{fields:")
+		for _, field := range typ.Fields {
+			b.WriteString(field.Name)
+			b.WriteByte(':')
+			b.WriteString(field.Tag)
+			b.WriteByte(':')
+			if field.Anonymous {
+				b.WriteByte('1')
+			} else {
+				b.WriteByte('0')
+			}
+			b.WriteByte(':')
+			b.WriteString(manifestTypeKey(field.Type))
+			b.WriteByte(';')
+		}
+		b.WriteByte('}')
+	}
+	return b.String()
+}
+
+func manifestSchemaName(typ RouteManifestType) string {
+	pkg := typ.PkgPath
+	if idx := strings.LastIndex(pkg, "/"); idx >= 0 {
+		pkg = pkg[idx+1:]
+	}
+	name := manifestTypeDisplayName(typ)
+	if name == "" {
+		name = manifestShortTypeName(typ.String)
+	}
+	if pkg == "" {
+		return sanitizeName(name)
+	}
+	return sanitizeName(pkg + "_" + name)
+}
+
+func manifestTypeDisplayName(typ RouteManifestType) string {
+	if len(typ.TypeArgs) == 0 && strings.Contains(typ.Name, "[") {
+		return manifestShortTypeName(typ.Name)
+	}
+	name := manifestShortTypeToken(typ.Name)
+	if name == "" {
+		return ""
+	}
+	for _, arg := range typ.TypeArgs {
+		if short := manifestTypeDisplayName(arg); short != "" {
+			name += "_" + short
+			continue
+		}
+		if short := manifestShortTypeName(arg.String); short != "" {
+			name += "_" + short
+		}
+	}
+	return name
+}
+
+func manifestShortTypeName(name string) string {
+	// Legacy manifests encoded generic type arguments only in Name/String.
+	// New manifests should use RouteManifestType.TypeArgs instead.
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	open := strings.IndexByte(name, '[')
+	if open < 0 {
+		return manifestShortTypeToken(name)
+	}
+
+	base := manifestShortTypeToken(name[:open])
+	close := matchingBracket(name, open)
+	if close < 0 {
+		return manifestShortTypeToken(name)
+	}
+
+	parts := []string{base}
+	for _, arg := range splitManifestTypeArgs(name[open+1 : close]) {
+		if short := manifestShortTypeName(arg); short != "" {
+			parts = append(parts, short)
+		}
+	}
+	if close+1 < len(name) {
+		if suffix := manifestShortTypeName(name[close+1:]); suffix != "" {
+			parts = append(parts, suffix)
+		}
+	}
+	return strings.Join(parts, "_")
+}
+
+func manifestShortTypeToken(token string) string {
+	token = strings.TrimSpace(token)
+	token = strings.TrimPrefix(token, "*")
+	token = strings.TrimPrefix(token, "[]")
+	if idx := strings.LastIndexByte(token, '/'); idx >= 0 {
+		token = token[idx+1:]
+	}
+	if idx := strings.LastIndexByte(token, '.'); idx >= 0 {
+		token = token[idx+1:]
+	}
+	return token
+}
+
+func matchingBracket(value string, open int) int {
+	depth := 0
+	for i := open; i < len(value); i++ {
+		switch value[i] {
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func splitManifestTypeArgs(value string) []string {
+	var args []string
+	start := 0
+	depth := 0
+	for i := 0; i < len(value); i++ {
+		switch value[i] {
+		case '[':
+			depth++
+		case ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				args = append(args, value[start:i])
+				start = i + 1
+			}
+		}
+	}
+	args = append(args, value[start:])
+	return args
 }
 
 func (g *Generator) generateRoute(route fox.RouteInfo) {
@@ -430,48 +890,35 @@ func (g *Generator) schema(typ reflect.Type) *openapi3.Schema {
 	}
 
 	var schema *openapi3.Schema
-	switch typ.Kind() {
-	case reflect.Bool:
-		schema = openapi3.NewBoolSchema()
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
-		schema = openapi3.NewInt32Schema()
-	case reflect.Int64:
-		schema = openapi3.NewInt64Schema()
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32:
-		schema = openapi3.NewInt32Schema()
-	case reflect.Uint64:
-		schema = openapi3.NewInt64Schema()
-	case reflect.Float32:
-		schema = openapi3.NewFloat64Schema()
-		schema.Format = "float"
-	case reflect.Float64:
-		schema = openapi3.NewFloat64Schema()
-	case reflect.String:
-		schema = openapi3.NewStringSchema()
-	case reflect.Slice, reflect.Array:
-		if typ.Elem().Kind() == reflect.Uint8 {
-			schema = openapi3.NewBytesSchema()
-			break
+	if scalar, ok := scalarSchema(typ.Kind().String()); ok {
+		schema = scalar
+	} else {
+		switch typ.Kind() {
+		case reflect.Slice, reflect.Array:
+			if typ.Elem().Kind() == reflect.Uint8 {
+				schema = openapi3.NewBytesSchema()
+				break
+			}
+			schema = openapi3.NewArraySchema()
+			schema.Items = g.schemaRef(typ.Elem())
+		case reflect.Map:
+			schema = openapi3.NewObjectSchema()
+			if typ.Key().Kind() == reflect.String {
+				schema.WithAdditionalProperties(g.schema(typ.Elem()))
+			} else {
+				schema.WithAnyAdditionalProperties()
+			}
+		case reflect.Struct:
+			if typ == reflect.TypeOf(time.Time{}) {
+				schema = openapi3.NewDateTimeSchema()
+				break
+			}
+			schema = g.objectSchema(typ)
+		case reflect.Interface:
+			schema = openapi3.NewObjectSchema().WithAnyAdditionalProperties()
+		default:
+			schema = openapi3.NewSchema()
 		}
-		schema = openapi3.NewArraySchema()
-		schema.Items = g.schemaRef(typ.Elem())
-	case reflect.Map:
-		schema = openapi3.NewObjectSchema()
-		if typ.Key().Kind() == reflect.String {
-			schema.WithAdditionalProperties(g.schema(typ.Elem()))
-		} else {
-			schema.WithAnyAdditionalProperties()
-		}
-	case reflect.Struct:
-		if typ == reflect.TypeOf(time.Time{}) {
-			schema = openapi3.NewDateTimeSchema()
-			break
-		}
-		schema = g.objectSchema(typ)
-	case reflect.Interface:
-		schema = openapi3.NewObjectSchema().WithAnyAdditionalProperties()
-	default:
-		schema = openapi3.NewSchema()
 	}
 
 	if nullable {
@@ -531,6 +978,11 @@ func operationID(route fox.RouteInfo) string {
 	}
 	name := cleanHandlerName(route.HandlerName)
 	return sanitizeName(name)
+}
+
+// CleanHandlerName strips runtime decorations from a Go handler symbol.
+func CleanHandlerName(name string) string {
+	return cleanHandlerName(name)
 }
 
 // cleanHandlerName strips runtime decorations that pollute operationIds:

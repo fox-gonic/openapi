@@ -36,6 +36,9 @@ func TestResolveEntryValidSignatures(t *testing.T) {
 	if !entry.TakesContext || !entry.TakesConfig {
 		t.Fatalf("expected context config entry: %+v", entry)
 	}
+	if entry.ConfigImportPath != "example.com/app/internal/config" || entry.ConfigTypeName != "Config" {
+		t.Fatalf("expected config type metadata: %+v", entry)
+	}
 	entry, err = ResolveEntry(dir, "example.com/app/internal/server.NewEngineWithConfigNoError")
 	if err != nil {
 		t.Fatal(err)
@@ -56,6 +59,22 @@ func TestResolveEntryRejectsBadSignature(t *testing.T) {
 func TestResolveConfigLoader(t *testing.T) {
 	dir := writeUserModule(t)
 	loader, err := ResolveConfigLoader(dir, "example.com/app/internal/config.Load", "config.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPath := dir + string(filepath.Separator) + "config.yaml"
+	if loader.ImportPath != "example.com/app/internal/config" || loader.FuncName != "Load" || loader.Path != wantPath {
+		t.Fatalf("unexpected loader: %+v", loader)
+	}
+}
+
+func TestResolveConfigLoaderFromEntry(t *testing.T) {
+	dir := writeUserModule(t)
+	entry, err := ResolveEntry(dir, "example.com/app/internal/server.NewEngineWithConfig")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loader, err := ResolveConfigLoaderFromEntry(dir, entry, "config.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

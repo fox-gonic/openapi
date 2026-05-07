@@ -142,11 +142,13 @@ func entryFromFunc(importPath string, obj *types.Func) (Entry, bool) {
 		return Entry{}, false
 	}
 	return Entry{
-		ImportPath:   importPath,
-		FuncName:     obj.Name(),
-		TakesContext: shape.takesContext,
-		TakesConfig:  shape.takesConfig,
-		ReturnsError: shape.returnsError,
+		ImportPath:       importPath,
+		FuncName:         obj.Name(),
+		TakesContext:     shape.takesContext,
+		TakesConfig:      shape.takesConfig,
+		ConfigImportPath: shape.configImportPath,
+		ConfigTypeName:   shape.configTypeName,
+		ReturnsError:     shape.returnsError,
 	}, true
 }
 

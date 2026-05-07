@@ -88,6 +88,35 @@ temporary dependency and restores `go.mod`/`go.sum` afterward. Add a direct
 requirement only when application code imports OpenAPI metadata hooks or
 library APIs.
 
+Alternatively, a Fox application can export a route manifest and let
+fox-openapi consume that file:
+
+```go
+if *routeManifestPath != "" {
+	if err := fox.WriteRouteManifest(engine, *routeManifestPath); err != nil {
+		log.Fatal(err)
+	}
+	return
+}
+```
+
+```yaml
+routeManifest: api/routes.manifest.json
+```
+
+```bash
+# First ask the application to write or refresh the manifest.
+myapp --openapi-route-manifest api/routes.manifest.json
+
+# Then ask fox-openapi to read the manifest and write the OpenAPI document.
+fox-openapi generate --route-manifest api/routes.manifest.json --out api/openapi.yaml
+```
+
+Manifest mode does not run the application entry and does not update the
+manifest file. It uses the existing manifest for methods, paths, handler
+identities, path parameters, operation IDs, request/response schemas, and source
+comment enrichment.
+
 ## Entry Functions
 
 `entry` must name an exported function with one of these signatures:
@@ -101,17 +130,28 @@ func NewEngine(context.Context, *Config) *fox.Engine
 func NewEngine(context.Context, *Config) (*fox.Engine, error)
 ```
 
-For config-taking entries, omit `entryConfig` to pass `nil` as the config
-argument, or provide a loader:
+For config-taking entries, provide an `entryConfig.path` and fox-openapi will
+use the entry config type's package-level `Load(string) (*Config, error)`
+function when it exists:
 
 ```yaml
 entryConfig:
-  loader: github.com/acme/myapp/internal/config.Load
   path: config.yaml
 ```
 
-Passing `nil` lets production code share one route-registration entry with
-OpenAPI generation without initializing databases or external providers.
+Use `entryConfig.loader` only when the loader is not the standard `Load`
+function or lives outside the config package:
+
+```yaml
+entryConfig:
+  loader: github.com/acme/myapp/internal/config.LoadForOpenAPI
+  path: config.yaml
+```
+
+This keeps the normal production `NewEngine(context.Context, *Config)` usable
+for OpenAPI generation without adding route-only branches just for the tool.
+When `entryConfig` is omitted entirely, fox-openapi still passes `nil` for
+compatibility with existing projects.
 
 ## Path resolution
 

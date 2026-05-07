@@ -144,7 +144,7 @@ func runGenerate(cmd *cobra.Command, opts *commonOptions, args []string) error {
 		return exitError{code: cli.ExitWriteFailed, err: fmt.Errorf("write %s: %w", out, err)}
 	}
 	fmt.Printf("wrote %s (%s, %d bytes)\n", out, strings.ToUpper(cfg.Format), len(data))
-	fmt.Printf("  entry: %s%s\n", cfg.Entry, autoTag(cfg.EntryAutoDiscovered))
+	printInputSummary(cfg)
 	return nil
 }
 
@@ -176,7 +176,7 @@ func newCheckCommand() *cobra.Command {
 				return exitError{code: cli.ExitWriteFailed, err: fmt.Errorf("check %s: %w", out, err)}
 			}
 			fmt.Printf("%s is up to date.\n", out)
-			fmt.Printf("  entry: %s%s\n", cfg.Entry, autoTag(cfg.EntryAutoDiscovered))
+			printInputSummary(cfg)
 			return nil
 		},
 	}
@@ -307,8 +307,9 @@ func bindCommonFlags(flags *pflag.FlagSet, opts *commonOptions) {
 	flags.Var(&opts.sources, "source", "source path")
 	flags.BoolVar(&o.IncludeTestFiles, "include-test-files", false, "include *_test.go")
 	flags.StringVar(&o.MetadataHook, "metadata-hook", "", "metadata hook")
-	flags.StringVar(&o.EntryConfigLoader, "entry-config-loader", "", "entry config loader")
+	flags.StringVar(&o.EntryConfigLoader, "entry-config-loader", "", "entry config loader (optional when config package has Load)")
 	flags.StringVar(&o.EntryConfigPath, "entry-config-path", "", "entry config path")
+	flags.StringVar(&o.RouteManifest, "route-manifest", "", "Fox route manifest path")
 	flags.StringVar(&o.Workdir, "workdir", ".", "user project root")
 	flags.BoolVar(&o.KeepDriver, "keep-driver", false, "keep generated driver")
 	flags.BoolVar(&o.Verbose, "verbose", false, "verbose output")
@@ -318,6 +319,7 @@ func bindCommonFlags(flags *pflag.FlagSet, opts *commonOptions) {
 		"metadata-hook",
 		"entry-config-loader",
 		"entry-config-path",
+		"route-manifest",
 		"keep-driver",
 		"verbose",
 		"format",
@@ -415,6 +417,8 @@ func markOverride(o *cli.Overrides, name string) {
 		o.EntryConfigLoaderSet = true
 	case "entry-config-path":
 		o.EntryConfigPathSet = true
+	case "route-manifest":
+		o.RouteManifestSet = true
 	case "workdir":
 		o.WorkdirSet = true
 	case "keep-driver":
@@ -441,6 +445,14 @@ func autoTag(autoDiscovered bool) string {
 		return " (auto-discovered)"
 	}
 	return ""
+}
+
+func printInputSummary(cfg cli.Config) {
+	if cfg.RouteManifest != "" {
+		fmt.Printf("  route manifest: %s\n", cfg.RouteManifest)
+		return
+	}
+	fmt.Printf("  entry: %s%s\n", cfg.Entry, autoTag(cfg.EntryAutoDiscovered))
 }
 
 type repeatedFlag struct {
