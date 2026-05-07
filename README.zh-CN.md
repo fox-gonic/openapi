@@ -12,6 +12,12 @@
 go install github.com/fox-gonic/openapi/cmd/fox-openapi@latest
 ```
 
+CI 中建议固定生成器版本，保证提交的 spec 可复现：
+
+```bash
+go install github.com/fox-gonic/openapi/cmd/fox-openapi@v0.3.0
+```
+
 在本仓库内开发时，可以直接运行：
 
 ```bash
@@ -70,19 +76,46 @@ metadata 时，才需要使用 `fox-openapi init` 创建配置文件。
 
 CLI 会构建一个隔离的临时 driver。基础生成场景下，业务模块不需要 `tools.go` 文件，也不需要提交直接的 `github.com/fox-gonic/openapi` 依赖；driver 构建会解析这个临时依赖，并在结束后恢复 `go.mod` / `go.sum`。只有业务代码自己 import OpenAPI metadata hook 或 library API 时，才需要直接声明依赖。
 
-也可以让 Fox 应用先导出 route manifest，再由 fox-openapi 读取这个文件：
+## Route Manifest 模式
+
+从 `v0.3.0` 开始，fox-openapi 可以读取业务应用导出的 route manifest 来生成
+OpenAPI，而不是通过临时 driver 调用应用 entry。当 `NewEngine` 依赖真实运行时对象、
+配置对象或环境初始化，不适合为了 OpenAPI 额外复刻时，推荐使用这个模式。
+
+manifest 文件由业务应用自己决定什么时候写入。常见做法是在正常启动逻辑旁边增加一个
+非生产用途的 CLI flag：
 
 ```go
+routeManifestPath := flag.String("openapi-route-manifest", "", "write Fox route manifest and exit")
+flag.Parse()
+
+engine, err := NewEngine(ctx, cfg)
+if err != nil {
+	log.Fatal(err)
+}
+
 if *routeManifestPath != "" {
 	if err := fox.WriteRouteManifest(engine, *routeManifestPath); err != nil {
 		log.Fatal(err)
 	}
 	return
 }
+
+if err := engine.Run(":8080"); err != nil {
+	log.Fatal(err)
+}
 ```
+
+不要在正常生产启动路径中启用这个 flag。fox-openapi 只读取这个文件；业务应用不需要
+import `github.com/fox-gonic/openapi`。
+
+然后配置 fox-openapi 读取生成好的 manifest：
 
 ```yaml
 routeManifest: api/routes.manifest.json
+out: api/openapi.yaml
+info:
+  title: Acme API
 ```
 
 ```bash
@@ -94,7 +127,7 @@ fox-openapi generate --route-manifest api/routes.manifest.json --out api/openapi
 ```
 
 Manifest 模式不会运行应用 entry，也不会更新 manifest 文件。它会使用已有 manifest
-中的方法、路径、handler 标识、path 参数、operationId、request / response schema，并继续结合源码注释补全文档。
+中的方法、路径、handler 标识、path 参数、operationId、request / response schema，并继续结合源码注释补全文档。如果 manifest 里只有 handler symbol，fox-openapi 会从 `workdir` 加载业务包来补全 request / response 类型，包括 alias、泛型 wrapper，以及开启 `includeTestFiles` 时定义在 `_test.go` 中的 handler。
 
 ## Entry 函数
 
@@ -167,6 +200,7 @@ servers:
 - `format`：`yaml` 或 `json`；未配置时根据 `out` 后缀推断。
 - `sources`：用于提取 Go 注释的源码路径，默认 `./...`。
 - `includeTestFiles`：扫描源码注释时是否包含 `_test.go` 文件。
+- `routeManifest`：读取 Fox route manifest 文件，而不是运行 entry。
 - `info`：`title`、`version`、`description`。
 - `servers`：OpenAPI server 列表，每项包含 `url` 和可选的 `description`。
 - `tags`：顶层 OpenAPI tag registry。
@@ -182,6 +216,7 @@ CLI flags 会覆盖配置文件，配置文件会覆盖默认值。
 fox-openapi init --entry internal/server.NewEngine --title "Acme API"
 fox-openapi --entry github.com/acme/myapp/internal/server.NewEngine --out api/openapi.yaml --title "Acme API"
 fox-openapi generate --entry github.com/acme/myapp/internal/server.NewEngine --out api/openapi.yaml --title "Acme API"
+fox-openapi generate --route-manifest api/routes.manifest.json --out api/openapi.yaml --title "Acme API"
 fox-openapi check
 fox-openapi serve --addr 127.0.0.1:8765
 fox-openapi version
@@ -195,6 +230,7 @@ fox-openapi version
 - `--title` 和 `--version`：OpenAPI info metadata。
 - `--server`：可重复传入的 OpenAPI server URL。
 - `--workdir`：业务项目根目录。
+- `--route-manifest`：Fox route manifest 文件。
 
 高级 flags 仍然保留给脚本和特殊项目使用，但默认 help 中隐藏：`--format`、
 `--source`、`--include-test-files`、`--metadata-hook`、`--entry-config-loader`、
@@ -316,12 +352,25 @@ for _, warning := range spec.Warnings() {
   run: git diff --exit-code api/openapi.yaml
 ```
 
+Manifest 模式下，先刷新业务应用负责的 manifest，再生成 OpenAPI：
+
+```yaml
+- name: Refresh route manifest
+  run: go run ./cmd/myapp --openapi-route-manifest api/routes.manifest.json
+- name: Generate OpenAPI spec
+  run: fox-openapi generate --route-manifest api/routes.manifest.json --out api/openapi.yaml
+- name: Verify spec is up to date
+  run: git diff --exit-code api/routes.manifest.json api/openapi.yaml
+```
+
 ## 故障排查
 
 - `entry is required`：未提供 `entry`，且自动发现匹配到 0 个或多个候选。请在 `fox-openapi.yaml` 中设置 `entry`、传 `--entry`，或在目标函数上添加 `// fox-openapi:entry` 标记。
 - Exit code `2`：生成的 driver 构建失败。检查 imports、replaces、entry 签名和 hook 签名。
 - Exit code `3`：driver 构建成功，但运行失败。检查 entry 的副作用或返回的错误。
 - Exit code `4`：`check` 发现 spec drift；运行 `fox-openapi generate` 并提交更新后的 spec。
+- `unsupported route manifest version`：使用兼容版本的 `github.com/fox-gonic/fox`
+  重新生成 manifest，再运行 fox-openapi。
 
 ## 当前限制
 

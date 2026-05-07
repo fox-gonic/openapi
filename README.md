@@ -15,6 +15,12 @@ unless it uses optional OpenAPI metadata hooks or the library API directly.
 go install github.com/fox-gonic/openapi/cmd/fox-openapi@latest
 ```
 
+For reproducible CI, pin the version used to generate committed specs:
+
+```bash
+go install github.com/fox-gonic/openapi/cmd/fox-openapi@v0.3.0
+```
+
 For local development in this repository:
 
 ```bash
@@ -88,20 +94,48 @@ temporary dependency and restores `go.mod`/`go.sum` afterward. Add a direct
 requirement only when application code imports OpenAPI metadata hooks or
 library APIs.
 
-Alternatively, a Fox application can export a route manifest and let
-fox-openapi consume that file:
+## Route Manifest Mode
+
+Since `v0.3.0`, fox-openapi can generate from a route manifest exported by the
+application instead of calling the application entry through a generated
+driver. Use this when `NewEngine` needs real runtime dependencies, configuration
+objects, or environment setup that should not be recreated just for OpenAPI
+generation.
+
+The application owns when to write the manifest. A common pattern is to add a
+non-production CLI flag next to normal startup code:
 
 ```go
+routeManifestPath := flag.String("openapi-route-manifest", "", "write Fox route manifest and exit")
+flag.Parse()
+
+engine, err := NewEngine(ctx, cfg)
+if err != nil {
+	log.Fatal(err)
+}
+
 if *routeManifestPath != "" {
 	if err := fox.WriteRouteManifest(engine, *routeManifestPath); err != nil {
 		log.Fatal(err)
 	}
 	return
 }
+
+if err := engine.Run(":8080"); err != nil {
+	log.Fatal(err)
+}
 ```
+
+Do not enable this flag in normal production startup. The tool reads the file;
+it does not require the application to import `github.com/fox-gonic/openapi`.
+
+Configure fox-openapi to consume the generated manifest:
 
 ```yaml
 routeManifest: api/routes.manifest.json
+out: api/openapi.yaml
+info:
+  title: Acme API
 ```
 
 ```bash
@@ -115,7 +149,10 @@ fox-openapi generate --route-manifest api/routes.manifest.json --out api/openapi
 Manifest mode does not run the application entry and does not update the
 manifest file. It uses the existing manifest for methods, paths, handler
 identities, path parameters, operation IDs, request/response schemas, and source
-comment enrichment.
+comment enrichment. If the manifest only contains handler symbols, fox-openapi
+loads the application packages from `workdir` to enrich request and response
+types, including aliases, generic wrappers, and handlers in `_test.go` when
+`includeTestFiles` is enabled.
 
 ## Entry Functions
 
@@ -200,6 +237,7 @@ Supported config keys:
 - `format`: `yaml` or `json`; inferred from `out` when omitted.
 - `sources`: source directories for Go doc comments; default `./...`.
 - `includeTestFiles`: include `_test.go` while scanning source comments.
+- `routeManifest`: read a Fox route manifest file instead of running an entry.
 - `info`: `title`, `version`, `description`.
 - `servers`: list of `url` and optional `description`.
 - `tags`: top-level OpenAPI tag registry.
@@ -215,6 +253,7 @@ CLI flags override config values. Config values override defaults.
 fox-openapi init --entry internal/server.NewEngine --title "Acme API"
 fox-openapi --entry github.com/acme/myapp/internal/server.NewEngine --out api/openapi.yaml --title "Acme API"
 fox-openapi generate --entry github.com/acme/myapp/internal/server.NewEngine --out api/openapi.yaml --title "Acme API"
+fox-openapi generate --route-manifest api/routes.manifest.json --out api/openapi.yaml --title "Acme API"
 fox-openapi check
 fox-openapi serve --addr 127.0.0.1:8765
 fox-openapi version
@@ -228,6 +267,7 @@ fox-openapi version
 - `--title` and `--version`: OpenAPI info metadata.
 - `--server`: repeatable OpenAPI server URL.
 - `--workdir`: user project root.
+- `--route-manifest`: Fox route manifest file.
 
 Advanced flags remain available for scripts and unusual projects but are hidden
 from normal help: `--format`, `--source`, `--include-test-files`,
@@ -357,6 +397,17 @@ Supported validation tags include `required`, `email`, `url`, `uri`, `uuid`,
   run: git diff --exit-code api/openapi.yaml
 ```
 
+For manifest mode, refresh the application-owned manifest before generating:
+
+```yaml
+- name: Refresh route manifest
+  run: go run ./cmd/myapp --openapi-route-manifest api/routes.manifest.json
+- name: Generate OpenAPI spec
+  run: fox-openapi generate --route-manifest api/routes.manifest.json --out api/openapi.yaml
+- name: Verify spec is up to date
+  run: git diff --exit-code api/routes.manifest.json api/openapi.yaml
+```
+
 ## Troubleshooting
 
 - `entry is required`: no `entry` provided and auto-discovery found 0 or
@@ -365,6 +416,8 @@ Supported validation tags include `required`, `email`, `url`, `uri`, `uuid`,
 - Exit code `2`: generated driver failed to build. Check imports, replaces, and entry/hook signatures.
 - Exit code `3`: the driver built but failed at runtime. Check entry side effects or returned errors.
 - Exit code `4`: `check` found drift; run `fox-openapi generate` and commit the updated spec.
+- `unsupported route manifest version`: regenerate the manifest with a compatible
+  `github.com/fox-gonic/fox` version and rerun fox-openapi.
 
 ## Current Limitations
 
