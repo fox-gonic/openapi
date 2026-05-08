@@ -152,6 +152,18 @@ func createDocumentedUser(_ *fox.Context, _ documentedCreateUserRequest) documen
 	return documentedUserResponse{}
 }
 
+// Create public documented user.
+//
+// Creates a user and returns the persisted representation.
+//
+// openapi:
+//
+//	x-public: true
+//	x-audience: external
+func createPublicDocumentedUser(_ *fox.Context, _ documentedCreateUserRequest) documentedUserResponse {
+	return documentedUserResponse{}
+}
+
 func createDocumentedUserWithStatus(_ *fox.Context, _ documentedCreateUserRequest) (statusResponse[documentedUserResponse], error) {
 	return statusResponseWithStatus(http.StatusCreated, documentedUserResponse{}), nil
 }
@@ -495,6 +507,29 @@ func TestGenerateReadsHandlerAndFieldCommentsFromSource(t *testing.T) {
 	responseSchemaName := "openapi_test_documentedUserResponse"
 	responseProps := spec["components"].(map[string]any)["schemas"].(map[string]any)[responseSchemaName].(map[string]any)["properties"].(map[string]any)
 	require.Equal(t, "Stable user identifier.", responseProps["id"].(map[string]any)["description"])
+}
+
+func TestGenerateReadsOperationExtensionsFromOpenAPICommentBlock(t *testing.T) {
+	engine := fox.New()
+	engine.POST("/public-documented-users", createPublicDocumentedUser)
+
+	g := openapi.New(engine,
+		openapi.Info("Fox Test API", "1.0.0"),
+		openapi.Source([]string{"./..."}, openapi.IncludeTestFiles()),
+	)
+
+	data, err := g.JSON()
+	require.NoError(t, err)
+
+	var spec map[string]any
+	require.NoError(t, json.Unmarshal(data, &spec))
+
+	op := spec["paths"].(map[string]any)["/public-documented-users"].(map[string]any)["post"].(map[string]any)
+	require.Equal(t, "Create public documented user.", op["summary"])
+	require.Equal(t, "Create public documented user.\n\nCreates a user and returns the persisted representation.", op["description"])
+	require.Equal(t, true, op["x-public"])
+	require.Equal(t, "external", op["x-audience"])
+	require.NotContains(t, op["description"], "openapi:")
 }
 
 func TestGenerateReadsFieldLineCommentsFromSource(t *testing.T) {

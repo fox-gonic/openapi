@@ -280,7 +280,9 @@ from normal help: `--format`, `--source`, `--include-test-files`,
 
 The generator reads regular Go comments from source files to fill operation
 summaries, operation descriptions, and schema field descriptions. It does not
-require `doc` tags.
+require `doc` tags. Handler comments can also include an `openapi:` block for
+operation-level metadata; when `summary` or `description` are omitted from the
+block, the regular handler comment still provides them.
 
 ```go
 type CreateUserRequest struct {
@@ -291,10 +293,19 @@ type CreateUserRequest struct {
 // Create user.
 //
 // Creates a user and returns the persisted representation.
+//
+// openapi:
+//   x-public: true
+//   x-audience: external
 func createUser(ctx *fox.Context, req CreateUserRequest) (UserResponse, error) {
 	return UserResponse{}, nil
 }
 ```
+
+The `openapi:` block is removed from the generated description. It supports
+OpenAPI extension fields such as `x-public` and `x-audience`, plus simple
+operation fields such as `summary`, `description`, `operationId`, `tags`, and
+`deprecated`.
 
 For metadata that needs Go values, add a small optional hook:
 
@@ -423,5 +434,5 @@ For manifest mode, refresh the application-owned manifest before generating:
 
 The current implementation intentionally does not generate DomainEngine-specific
 multi-host specs, custom schema naming overrides, or operation/group tag
-assignment directly from YAML config. Use `metadataHook` for route-specific
-metadata.
+assignment directly from YAML config. Use handler comment `openapi:` blocks for
+simple operation metadata and `metadataHook` when metadata needs Go values.

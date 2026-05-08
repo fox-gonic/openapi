@@ -20,6 +20,7 @@ type operationDoc struct {
 	OperationID string
 	Tags        []string
 	Deprecated  *bool
+	Extensions  map[string]any
 	Responses   map[int]responseDoc
 	Security    openapi3.SecurityRequirements
 }
@@ -156,6 +157,17 @@ func hasSuccessResponse(doc operationDoc) bool {
 	return false
 }
 
+func (doc operationDoc) empty() bool {
+	return doc.Summary == "" &&
+		doc.Description == "" &&
+		doc.OperationID == "" &&
+		len(doc.Tags) == 0 &&
+		doc.Deprecated == nil &&
+		len(doc.Extensions) == 0 &&
+		len(doc.Responses) == 0 &&
+		len(doc.Security) == 0
+}
+
 func (g *Generator) applyDoc(op *openapi3.Operation, doc operationDoc) {
 	if doc.Summary != "" {
 		op.Summary = doc.Summary
@@ -174,6 +186,14 @@ func (g *Generator) applyDoc(op *openapi3.Operation, doc operationDoc) {
 	}
 	if len(doc.Security) > 0 {
 		op.Security = &doc.Security
+	}
+	if len(doc.Extensions) > 0 {
+		if op.Extensions == nil {
+			op.Extensions = make(map[string]any)
+		}
+		for key, value := range doc.Extensions {
+			op.Extensions[key] = value
+		}
 	}
 	for status, response := range doc.Responses {
 		op.Responses.Set(strconv.Itoa(status), g.explicitResponse(status, response))
