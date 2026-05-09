@@ -325,6 +325,7 @@ func TestSpecErrReturnsGenerationFailure(t *testing.T) {
 	require.ErrorContains(t, g.Err(), "filter failed")
 	_, err = g.WarningsErr()
 	require.ErrorContains(t, err, "filter failed")
+	require.Nil(t, g.Spec())
 }
 
 func TestFailedFilterDoesNotCachePartiallyMutatedSpec(t *testing.T) {

@@ -380,16 +380,36 @@ func collectRefs(value any, addRef func(string)) {
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, child := range typed {
-			if key == "$ref" {
+			switch key {
+			case "$ref", "operationRef":
 				if ref, ok := child.(string); ok && strings.HasPrefix(ref, "#/components/") {
 					addRef(ref)
 				}
+			case "mapping":
+				collectComponentRefStrings(child, addRef)
 			}
 			collectRefs(child, addRef)
 		}
 	case []any:
 		for _, child := range typed {
 			collectRefs(child, addRef)
+		}
+	}
+}
+
+func collectComponentRefStrings(value any, addRef func(string)) {
+	switch typed := value.(type) {
+	case string:
+		if strings.HasPrefix(typed, "#/components/") {
+			addRef(typed)
+		}
+	case map[string]any:
+		for _, child := range typed {
+			collectComponentRefStrings(child, addRef)
+		}
+	case []any:
+		for _, child := range typed {
+			collectComponentRefStrings(child, addRef)
 		}
 	}
 }

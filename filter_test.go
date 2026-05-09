@@ -100,6 +100,69 @@ func TestPruneUnusedComponentsKeepsComponentReachedBySubpathRef(t *testing.T) {
 	require.NotContains(t, spec.Components.Schemas, "Unused")
 }
 
+func TestPruneUnusedComponentsKeepsDiscriminatorMappingRefs(t *testing.T) {
+	pet := openapi3.NewObjectSchema()
+	pet.Discriminator = &openapi3.Discriminator{
+		PropertyName: "kind",
+		Mapping: openapi3.StringMap[openapi3.MappingRef]{
+			"cat": {Ref: "#/components/schemas/Cat"},
+		},
+	}
+	spec := &openapi3.T{
+		Paths: openapi3.NewPaths(),
+		Components: &openapi3.Components{
+			Schemas: openapi3.Schemas{
+				"Pet":    openapi3.NewSchemaRef("", pet),
+				"Cat":    openapi3.NewSchemaRef("", openapi3.NewObjectSchema()),
+				"Unused": openapi3.NewSchemaRef("", openapi3.NewObjectSchema()),
+			},
+		},
+	}
+	spec.Paths.Set("/pets", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "pets",
+		Responses: openapi3.NewResponses(openapi3.WithStatus(http.StatusOK, &openapi3.ResponseRef{Value: openapi3.NewResponse().
+			WithDescription("OK").
+			WithJSONSchemaRef(&openapi3.SchemaRef{Ref: "#/components/schemas/Pet"})})),
+	}})
+
+	err := openapi.ApplyFilters(spec, openapi.PruneUnusedComponents())
+
+	require.NoError(t, err)
+	require.Contains(t, spec.Components.Schemas, "Pet")
+	require.Contains(t, spec.Components.Schemas, "Cat")
+	require.NotContains(t, spec.Components.Schemas, "Unused")
+}
+
+func TestPruneUnusedComponentsKeepsOperationRefComponentRefs(t *testing.T) {
+	spec := &openapi3.T{
+		Paths: openapi3.NewPaths(),
+		Components: &openapi3.Components{
+			Links: openapi3.Links{
+				"UserLookup": &openapi3.LinkRef{Value: &openapi3.Link{OperationRef: "#/components/schemas/User"}},
+				"UnusedLink": &openapi3.LinkRef{Value: &openapi3.Link{OperationID: "unused"}},
+			},
+			Schemas: openapi3.Schemas{
+				"User":   openapi3.NewSchemaRef("", openapi3.NewObjectSchema()),
+				"Unused": openapi3.NewSchemaRef("", openapi3.NewObjectSchema()),
+			},
+		},
+	}
+	response := openapi3.NewResponse().WithDescription("OK")
+	response.Links = openapi3.Links{"user": &openapi3.LinkRef{Ref: "#/components/links/UserLookup"}}
+	spec.Paths.Set("/users", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "users",
+		Responses:   openapi3.NewResponses(openapi3.WithStatus(http.StatusOK, &openapi3.ResponseRef{Value: response})),
+	}})
+
+	err := openapi.ApplyFilters(spec, openapi.PruneUnusedComponents())
+
+	require.NoError(t, err)
+	require.Contains(t, spec.Components.Links, "UserLookup")
+	require.NotContains(t, spec.Components.Links, "UnusedLink")
+	require.Contains(t, spec.Components.Schemas, "User")
+	require.NotContains(t, spec.Components.Schemas, "Unused")
+}
+
 func TestOperationExtensionBoolDefault(t *testing.T) {
 	op := openapi.OperationContext{Operation: &openapi3.Operation{Extensions: map[string]any{"x-public": false}}}
 
