@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -25,12 +26,18 @@ type commentDocs struct {
 	funcsByShort      map[string]funcComment
 	statusByQualified map[string]int
 	fieldsByType      map[string]map[string]string
+	warnings          []string
 	includeTests      bool
 }
 
 type funcComment struct {
 	text string
 	doc  operationDoc
+}
+
+type openAPICommentBlock struct {
+	HumanDocumentation string
+	OpenAPIMetadata    string
 }
 
 func newCommentDocs() *commentDocs {
@@ -75,6 +82,9 @@ func Source(paths []string, opts ...SourceOption) Option {
 			if err := docs.load(path); err != nil {
 				g.warnf("openapi source %q: %v", path, err)
 			}
+		}
+		for _, warning := range docs.warnings {
+			g.warnf("%s", warning)
 		}
 		g.docs = docs
 	}
@@ -151,7 +161,10 @@ func (d *commentDocs) addFunc(pkgName string, decl *ast.FuncDecl, imports map[st
 	}
 
 	if decl.Doc != nil {
-		comment := parseFuncComment(commentText(decl.Doc))
+		comment, err := parseFuncComment(commentText(decl.Doc))
+		if err != nil {
+			d.warnings = append(d.warnings, fmt.Sprintf("invalid openapi comment block for %s: %v", qualified, err))
+		}
 		d.funcsByQualified[qualified] = comment
 		// Short name is best-effort fallback — last writer wins on collision.
 		d.funcsByShort[short] = comment
@@ -328,22 +341,22 @@ func commentText(group *ast.CommentGroup) string {
 	return strings.TrimSpace(group.Text())
 }
 
-func parseFuncComment(text string) funcComment {
-	humanDoc, metadataBlock := splitOpenAPICommentBlock(text)
-	comment := funcComment{text: humanDoc}
-	if metadataBlock == "" {
-		return comment
+func parseFuncComment(text string) (funcComment, error) {
+	block := splitOpenAPICommentBlock(text)
+	comment := funcComment{text: block.HumanDocumentation}
+	if block.OpenAPIMetadata == "" {
+		return comment, nil
 	}
 
 	var values map[string]any
-	if err := yaml.Unmarshal([]byte(metadataBlock), &values); err != nil {
-		return comment
+	if err := yaml.Unmarshal([]byte(block.OpenAPIMetadata), &values); err != nil {
+		return comment, err
 	}
 	comment.doc = operationDocFromCommentBlock(values)
-	return comment
+	return comment, nil
 }
 
-func splitOpenAPICommentBlock(text string) (string, string) {
+func splitOpenAPICommentBlock(text string) openAPICommentBlock {
 	lines := strings.Split(text, "\n")
 	humanLines := make([]string, 0, len(lines))
 	metadataLines := make([]string, 0, len(lines))
@@ -368,10 +381,61 @@ func splitOpenAPICommentBlock(text string) (string, string) {
 			inBlock = false
 			continue
 		}
-		metadataLines = append(metadataLines, strings.TrimLeft(line, " \t"))
+		metadataLines = append(metadataLines, line)
 	}
 
-	return strings.TrimSpace(strings.Join(humanLines, "\n")), strings.TrimSpace(strings.Join(metadataLines, "\n"))
+	metadataLines = dedentLines(metadataLines)
+	return openAPICommentBlock{
+		HumanDocumentation: strings.TrimSpace(strings.Join(humanLines, "\n")),
+		OpenAPIMetadata:    strings.TrimSpace(strings.Join(metadataLines, "\n")),
+	}
+}
+
+func dedentLines(lines []string) []string {
+	indent := commonIndent(lines)
+	if indent == "" {
+		return lines
+	}
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = strings.TrimPrefix(line, indent)
+	}
+	return out
+}
+
+func commonIndent(lines []string) string {
+	prefix := ""
+	found := false
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		indent := leadingWhitespace(line)
+		if !found {
+			prefix = indent
+			found = true
+			continue
+		}
+		prefix = commonPrefix(prefix, indent)
+	}
+	return prefix
+}
+
+func leadingWhitespace(line string) string {
+	return line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+}
+
+func commonPrefix(a, b string) string {
+	max := len(a)
+	if len(b) < max {
+		max = len(b)
+	}
+	for i := 0; i < max; i++ {
+		if a[i] != b[i] {
+			return a[:i]
+		}
+	}
+	return a[:max]
 }
 
 func operationDocFromCommentBlock(values map[string]any) operationDoc {

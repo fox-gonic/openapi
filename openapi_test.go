@@ -164,6 +164,28 @@ func createPublicDocumentedUser(_ *fox.Context, _ documentedCreateUserRequest) d
 	return documentedUserResponse{}
 }
 
+// Create rate limited documented user.
+//
+// Creates a user with nested OpenAPI extension metadata.
+//
+// openapi:
+//
+//	x-rate-limit:
+//	  tier: public
+//	  burst: 10
+func createRateLimitedDocumentedUser(_ *fox.Context, _ documentedCreateUserRequest) documentedUserResponse {
+	return documentedUserResponse{}
+}
+
+// Create invalid documented user.
+//
+// openapi:
+//
+//	x-public: [broken
+func createInvalidOpenAPICommentUser(_ *fox.Context, _ documentedCreateUserRequest) documentedUserResponse {
+	return documentedUserResponse{}
+}
+
 func createDocumentedUserWithStatus(_ *fox.Context, _ documentedCreateUserRequest) (statusResponse[documentedUserResponse], error) {
 	return statusResponseWithStatus(http.StatusCreated, documentedUserResponse{}), nil
 }
@@ -512,6 +534,7 @@ func TestGenerateReadsHandlerAndFieldCommentsFromSource(t *testing.T) {
 func TestGenerateReadsOperationExtensionsFromOpenAPICommentBlock(t *testing.T) {
 	engine := fox.New()
 	engine.POST("/public-documented-users", createPublicDocumentedUser)
+	engine.POST("/rate-limited-documented-users", createRateLimitedDocumentedUser)
 
 	g := openapi.New(engine,
 		openapi.Info("Fox Test API", "1.0.0"),
@@ -530,6 +553,28 @@ func TestGenerateReadsOperationExtensionsFromOpenAPICommentBlock(t *testing.T) {
 	require.Equal(t, true, op["x-public"])
 	require.Equal(t, "external", op["x-audience"])
 	require.NotContains(t, op["description"], "openapi:")
+
+	rateLimitedOp := spec["paths"].(map[string]any)["/rate-limited-documented-users"].(map[string]any)["post"].(map[string]any)
+	rateLimit := rateLimitedOp["x-rate-limit"].(map[string]any)
+	require.Equal(t, "public", rateLimit["tier"])
+	require.Equal(t, float64(10), rateLimit["burst"])
+}
+
+func TestGenerateWarnsForInvalidOpenAPICommentBlock(t *testing.T) {
+	engine := fox.New()
+	engine.POST("/invalid-openapi-comment", createInvalidOpenAPICommentUser)
+
+	g := openapi.New(engine,
+		openapi.Info("Fox Test API", "1.0.0"),
+		openapi.Source([]string{"./..."}, openapi.IncludeTestFiles()),
+	)
+
+	_, err := g.JSON()
+	require.NoError(t, err)
+
+	require.Len(t, g.Warnings(), 1)
+	require.Contains(t, g.Warnings()[0], "openapi_test.createInvalidOpenAPICommentUser")
+	require.Contains(t, g.Warnings()[0], "invalid openapi comment block")
 }
 
 func TestGenerateReadsFieldLineCommentsFromSource(t *testing.T) {
