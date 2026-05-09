@@ -40,6 +40,7 @@ type Generator struct {
 	groups               []groupDoc
 	formatters           map[reflect.Type]*openapi3.Schema
 	errorSchema          reflect.Type
+	filters              []Filter
 	generated            bool
 }
 
@@ -55,6 +56,13 @@ func Info(title, version string) Option {
 func Server(url string) Option {
 	return func(g *Generator) {
 		g.spec.AddServer(&openapi3.Server{URL: url})
+	}
+}
+
+// WithFilters applies post-generation filters before the spec is serialized.
+func WithFilters(filters ...Filter) Option {
+	return func(g *Generator) {
+		g.filters = append(g.filters, filters...)
 	}
 }
 
@@ -98,7 +106,7 @@ func NewFromRouteManifest(manifest RouteManifest, opts ...Option) *Generator {
 // route table; subsequent calls also re-walk so freshly registered routes are
 // reflected.
 func (g *Generator) Spec() *openapi3.T {
-	g.ensureGenerated()
+	_ = g.ensureGenerated()
 	return g.spec
 }
 
@@ -117,20 +125,24 @@ func (g *Generator) Regenerate() {
 	g.spec.Components.Responses = openapi3.ResponseBodies{}
 }
 
-func (g *Generator) ensureGenerated() {
+func (g *Generator) ensureGenerated() error {
 	if g.generated {
-		return
+		return nil
 	}
 	g.addSourceWarnings()
 	g.addHTTPErrorSchema()
 	g.generate()
+	if err := ApplyFilters(g.spec, g.filters...); err != nil {
+		return err
+	}
 	g.generated = true
+	return nil
 }
 
 // Warnings returns non-fatal generation warnings, triggering generation if it
 // has not yet happened.
 func (g *Generator) Warnings() []string {
-	g.ensureGenerated()
+	_ = g.ensureGenerated()
 	return append([]string(nil), g.warnings...)
 }
 
@@ -149,13 +161,17 @@ func (g *Generator) addSourceWarnings() {
 
 // JSON serializes the generated spec as formatted JSON.
 func (g *Generator) JSON() ([]byte, error) {
-	g.ensureGenerated()
+	if err := g.ensureGenerated(); err != nil {
+		return nil, err
+	}
 	return json.MarshalIndent(g.spec, "", "  ")
 }
 
 // YAML serializes the generated spec as YAML.
 func (g *Generator) YAML() ([]byte, error) {
-	g.ensureGenerated()
+	if err := g.ensureGenerated(); err != nil {
+		return nil, err
+	}
 	return yaml.Marshal(g.spec)
 }
 

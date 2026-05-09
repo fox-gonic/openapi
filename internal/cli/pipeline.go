@@ -84,9 +84,9 @@ func runManifestPipeline(cfg Config) ([]byte, []string, error) {
 	openapi.ApplySpecMetadata(spec, specMetadata(cfg))
 	var out []byte
 	if cfg.Format == FormatJSON {
-		out, err = openapi.MarshalSpecJSON(spec)
+		out, err = g.JSON()
 	} else {
-		out, err = openapi.MarshalSpecYAML(spec)
+		out, err = g.YAML()
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate spec: %w", err)
@@ -117,7 +117,29 @@ func manifestOptions(cfg Config) ([]openapi.Option, error) {
 	for _, name := range sortedSchemeNames(cfg.SecuritySchemes) {
 		opts = append(opts, openapi.SecuritySchemeFromConfig(name, securitySchemeConfig(cfg.SecuritySchemes[name])))
 	}
+	filters, err := filtersFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if len(filters) > 0 {
+		opts = append(opts, openapi.WithFilters(filters...))
+	}
 	return opts, nil
+}
+
+func filtersFromConfig(cfg Config) ([]openapi.Filter, error) {
+	var filters []openapi.Filter
+	for _, expression := range cfg.Filters {
+		filter, err := openapi.FilterOperationExpression(expression)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, filter)
+	}
+	if cfg.PruneUnusedComponents {
+		filters = append(filters, openapi.PruneUnusedComponents())
+	}
+	return filters, nil
 }
 
 func specMetadata(cfg Config) openapi.SpecMetadata {

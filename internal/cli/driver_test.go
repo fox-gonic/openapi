@@ -34,6 +34,8 @@ func TestWriteDriverRendersMetadataAndAbsoluteSources(t *testing.T) {
 				BearerFormat: "JWT",
 			},
 		},
+		Filters:               []string{"x-public != false", "x-product = sandbox"},
+		PruneUnusedComponents: true,
 	}
 	driverDir, err := WriteDriver(cfg, Entry{ImportPath: "example.com/app/internal/server", FuncName: "NewEngine"}, &Hook{ImportPath: "example.com/app/internal/server", FuncName: "ConfigureOpenAPI"}, nil)
 	if err != nil {
@@ -52,6 +54,9 @@ func TestWriteDriverRendersMetadataAndAbsoluteSources(t *testing.T) {
 		`"prod"`,
 		`openapi.SpecTag{Name: "users"`,
 		`openapi.SecuritySchemeFromConfig("BearerAuth"`,
+		`openapi.FilterOperationExpression("x-public != false")`,
+		`openapi.FilterOperationExpression("x-product = sandbox")`,
+		`openapi.PruneUnusedComponents()`,
 		`opts = append(opts, userhook.ConfigureOpenAPI()...)`,
 		filepath.ToSlash(filepath.Join(dir, "internal/server")),
 		filepath.ToSlash(filepath.Join(dir, "pkg")) + "/...",

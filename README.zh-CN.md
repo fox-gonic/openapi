@@ -12,10 +12,10 @@
 go install github.com/fox-gonic/openapi/cmd/fox-openapi@latest
 ```
 
-CI 中建议固定生成器版本，保证提交的 spec 可复现：
+CI 中建议固定生成器版本，保证提交的 spec 可复现。请把 `vX.Y.Z` 替换为下游仓库实际使用的版本：
 
 ```bash
-go install github.com/fox-gonic/openapi/cmd/fox-openapi@v0.3.0
+go install github.com/fox-gonic/openapi/cmd/fox-openapi@vX.Y.Z
 ```
 
 在本仓库内开发时，可以直接运行：
@@ -26,7 +26,7 @@ go run ./cmd/fox-openapi version
 
 ## 快速开始
 
-先暴露一个 entry 函数，用来注册路由并返回 `*fox.Engine`。这个函数不应该调用 `Run`、监听端口，或启动和路由注册无关的基础设施。
+先暴露一个 engine factory 函数，用来注册路由并返回 `*fox.Engine`。这个函数不应该调用 `Run`、监听端口，或启动和路由注册无关的基础设施。
 
 ```go
 package server
@@ -49,7 +49,7 @@ fox-openapi check
 fox-openapi serve --addr 127.0.0.1:8765
 ```
 
-当配置中省略 `entry` 且未传 `--entry` 时，CLI 会扫描 `sources`（默认 `./...`），查找一个签名符合 entry 形状的导出函数。如果只匹配到一个就直接使用；匹配到多个则报错并列出所有候选 —— 用 `--entry` 选定，或在某个函数的 doc 注释中添加标记：
+当配置中省略 `entry` 且未传 `--entry` 时，CLI 会扫描 `sources`（默认 `./...`），查找一个签名符合 entry 形状的导出函数。如果只匹配到一个就直接使用；匹配到多个则报错并列出所有候选。推荐在标准入口的 doc 注释中添加标记：
 
 ```go
 // NewEngine 构建生产环境 HTTP engine。
@@ -60,30 +60,43 @@ func NewEngine() *fox.Engine { ... }
 
 只要至少有一个候选携带 `fox-openapi:entry` 标记，就只考虑被标记的候选，因此可以在不删除其他 entry 形状辅助函数的情况下消除歧义。
 
-`serve` 会暴露 `/openapi.yaml`、`/openapi.json`、`/docs`、`/scalar` 和 `/redoc`，并使用内置的离线 UI 资源。
+`--entry` 仍然保留给脚本、CI 和特殊目录布局，用来显式固定入口函数：
 
-配置简单的项目不需要创建配置文件。只有想覆盖默认值时才需要传 flags：
+```bash
+fox-openapi generate \
+  --entry github.com/acme/myapp/internal/server.NewEngine
+```
+
+支持的 entry 签名包括：
+
+```go
+func NewEngine() *fox.Engine
+func NewEngine() (*fox.Engine, error)
+func NewEngine(context.Context) *fox.Engine
+func NewEngine(context.Context) (*fox.Engine, error)
+func NewEngine(context.Context, *Config) *fox.Engine
+func NewEngine(context.Context, *Config) (*fox.Engine, error)
+```
+
+`serve` 会暴露 `/openapi.yaml`、`/openapi.json`、`/docs`、`/scalar` 和 `/redoc`，并使用内置的离线 UI 资源。它默认监听 Go 文件变化，并在源码变化后重新生成预览。
+
+配置简单的项目不需要创建配置文件。只有想覆盖输出路径或 metadata 默认值时才需要传 flags：
 
 ```bash
 fox-openapi \
-  --entry github.com/acme/myapp/internal/server.NewEngine \
   --out api/openapi.yaml \
   --title "Acme API"
 ```
 
-只有在需要提交 title、servers、tags、security schemes 或 entry config 等共享
-metadata 时，才需要使用 `fox-openapi init` 创建配置文件。
+只有在需要提交 title、servers、tags、security schemes 或 entry config 等共享 metadata 时，才需要使用 `fox-openapi init` 创建配置文件。
 
-CLI 会构建一个隔离的临时 driver。基础生成场景下，业务模块不需要 `tools.go` 文件，也不需要提交直接的 `github.com/fox-gonic/openapi` 依赖；driver 构建会解析这个临时依赖，并在结束后恢复 `go.mod` / `go.sum`。只有业务代码自己 import OpenAPI metadata hook 或 library API 时，才需要直接声明依赖。
+基于 entry 生成时，CLI 会构建一个隔离的临时 driver。基础生成场景下，业务模块不需要 `tools.go` 文件，也不需要提交直接的 `github.com/fox-gonic/openapi` 依赖；driver 构建会解析这个临时依赖，并在结束后恢复 `go.mod` / `go.sum`。只有业务代码自己 import OpenAPI metadata hook 或 library API 时，才需要直接声明依赖。
 
 ## Route Manifest 模式
 
-从 `v0.3.0` 开始，fox-openapi 可以读取业务应用导出的 route manifest 来生成
-OpenAPI，而不是通过临时 driver 调用应用 entry。当 `NewEngine` 依赖真实运行时对象、
-配置对象或环境初始化，不适合为了 OpenAPI 额外复刻时，推荐使用这个模式。
+从 `v0.3.0` 开始，fox-openapi 可以读取业务应用导出的 route manifest 来生成 OpenAPI，而不是通过临时 driver 调用应用 entry。当 `NewEngine` 依赖真实运行时对象、配置对象或环境初始化，不适合为了 OpenAPI 额外复刻时，推荐使用这个模式。
 
-manifest 文件由业务应用自己决定什么时候写入。常见做法是在正常启动逻辑旁边增加一个
-非生产用途的 CLI flag：
+manifest 文件由业务应用自己决定什么时候写入。常见做法是在正常启动逻辑旁边增加一个非生产用途的 CLI flag：
 
 ```go
 routeManifestPath := flag.String("openapi-route-manifest", "", "write Fox route manifest and exit")
@@ -106,8 +119,7 @@ if err := engine.Run(":8080"); err != nil {
 }
 ```
 
-不要在正常生产启动路径中启用这个 flag。fox-openapi 只读取这个文件；业务应用不需要
-import `github.com/fox-gonic/openapi`。
+不要在正常生产启动路径中启用这个 flag。fox-openapi 只读取这个文件；业务应用不需要 import `github.com/fox-gonic/openapi`。
 
 然后配置 fox-openapi 读取生成好的 manifest：
 
@@ -126,42 +138,7 @@ myapp --openapi-route-manifest api/routes.manifest.json
 fox-openapi generate --route-manifest api/routes.manifest.json --out api/openapi.yaml
 ```
 
-Manifest 模式不会运行应用 entry，也不会更新 manifest 文件。它会使用已有 manifest
-中的方法、路径、handler 标识、path 参数、operationId、request / response schema，并继续结合源码注释补全文档。如果 manifest 里只有 handler symbol，fox-openapi 会从 `workdir` 加载业务包来补全 request / response 类型，包括 alias、泛型 wrapper，以及开启 `includeTestFiles` 时定义在 `_test.go` 中的 handler。
-
-## Entry 函数
-
-`entry` 必须指向一个导出函数，并符合以下签名之一：
-
-```go
-func NewEngine() *fox.Engine
-func NewEngine() (*fox.Engine, error)
-func NewEngine(context.Context) *fox.Engine
-func NewEngine(context.Context) (*fox.Engine, error)
-func NewEngine(context.Context, *Config) *fox.Engine
-func NewEngine(context.Context, *Config) (*fox.Engine, error)
-```
-
-对于接收配置的 entry，提供 `entryConfig.path` 后，fox-openapi 会优先在 entry
-的配置类型所在包中自动使用包级 `Load(string) (*Config, error)` 函数：
-
-```yaml
-entryConfig:
-  path: config.yaml
-```
-
-只有当 loader 不是标准 `Load`，或不在配置类型所在包中时，才需要显式指定
-`entryConfig.loader`：
-
-```yaml
-entryConfig:
-  loader: github.com/acme/myapp/internal/config.LoadForOpenAPI
-  path: config.yaml
-```
-
-这样 OpenAPI 生成可以直接复用正常的生产
-`NewEngine(context.Context, *Config)`，不需要为了工具额外添加 route-only 分支。
-为了兼容已有项目，完全省略 `entryConfig` 时，fox-openapi 仍会传入 `nil`。
+Manifest 模式不会运行应用 entry，也不会更新 manifest 文件。它会使用已有 manifest 中的方法、路径、handler 标识、path 参数、operationId、request / response schema，并继续结合源码注释补全文档。如果 manifest 里只有 handler symbol，fox-openapi 会从 `workdir` 加载业务包来补全 request / response 类型，包括 alias、泛型 wrapper，以及开启 `includeTestFiles` 时定义在 `_test.go` 中的 handler。
 
 ## 路径解析
 
@@ -176,6 +153,58 @@ cd ~/myapp
 fox-openapi generate internal/aone --out api/openapi.yaml
 # 写入 ~/myapp/api/openapi.yaml   ← 相对于 CWD，而非被扫描的目录
 ```
+
+## 过滤后的规格
+
+fox-openapi 可以从完整 OpenAPI contract 中派生更窄的文档。第一版 CLI 形态刻意保持简单：删除某个 extension 等于指定标量值的 operation，然后可选地裁剪不再被引用的 components。
+
+例如，可以在 handler 注释中标记内部 operation：
+
+```go
+// List API keys.
+//
+// openapi:
+//
+//	x-public: false
+func listAPIKeys(ctx *fox.Context) (ListAPIKeysResponse, error) {
+	return ListAPIKeysResponse{}, nil
+}
+```
+
+然后生成 public-only spec：
+
+```bash
+fox-openapi generate \
+  --out api/public.openapi.yaml \
+  --filter "x-public != false" \
+  --filter "x-product = sandbox || x-product = account" \
+  --prune-unused-components
+```
+
+同样的设置也可以写进 `fox-openapi.yaml`：
+
+```yaml
+out: api/public.openapi.yaml
+filters:
+  - x-public != false
+  - x-product = sandbox || x-product = account
+pruneUnusedComponents: true
+```
+
+Library API 会直接暴露通用过滤 pipeline：
+
+```go
+spec := openapi.New(engine,
+	openapi.WithFilters(
+		openapi.FilterOperations(func(op openapi.OperationContext) bool {
+			return op.ExtensionBoolDefault("x-public", true)
+		}),
+		openapi.PruneUnusedComponents(),
+	),
+)
+```
+
+过滤发生在生成之后。显式 metadata、响应推断和源码注释补全都会先执行，因此派生规格会保留和完整文档一致的 contract 语义。
 
 ## 配置
 
@@ -205,8 +234,14 @@ servers:
 - `servers`：OpenAPI server 列表，每项包含 `url` 和可选的 `description`。
 - `tags`：顶层 OpenAPI tag registry。
 - `securitySchemes`：可序列化的 HTTP、API key、OAuth2 或 OpenID Connect security scheme。
+- `filters`：operation 过滤表达式。支持的操作符为 `=`、`==` 和 `!=`；
+  单个表达式内部可用 `||` 表示 OR，多个 filter 会以 AND 组合。
+- `pruneUnusedComponents`：过滤后删除不再被引用的 components。
 - `metadataHook`：可选的高级 Go hook。
-- `entryConfig`：接收配置的 entry 使用的可选 `loader` 和 `path`。
+- `entryConfig`：接收配置的 entry 使用的可选 `path` 和 `loader`。设置
+  `path` 后，fox-openapi 会先在配置类型所在包中查找包级
+  `Load(string) (*Config, error)` 函数；只有需要非标准加载函数时才需要设置
+  `loader`。完全省略时，接收配置的 entry 会收到 `nil`，以兼容已有项目。
 
 CLI flags 会覆盖配置文件，配置文件会覆盖默认值。
 
@@ -214,8 +249,8 @@ CLI flags 会覆盖配置文件，配置文件会覆盖默认值。
 
 ```bash
 fox-openapi init --entry internal/server.NewEngine --title "Acme API"
-fox-openapi --entry github.com/acme/myapp/internal/server.NewEngine --out api/openapi.yaml --title "Acme API"
-fox-openapi generate --entry github.com/acme/myapp/internal/server.NewEngine --out api/openapi.yaml --title "Acme API"
+fox-openapi --out api/openapi.yaml --title "Acme API"
+fox-openapi generate --entry github.com/acme/myapp/internal/server.NewEngine
 fox-openapi generate --route-manifest api/routes.manifest.json --out api/openapi.yaml --title "Acme API"
 fox-openapi check
 fox-openapi serve --addr 127.0.0.1:8765
@@ -225,16 +260,18 @@ fox-openapi version
 `fox-openapi`、`generate`、`check` 和 `serve` 共用以下常用配置 flags：
 
 - `--config`：配置文件路径，默认 `fox-openapi.yaml`。
-- `--entry`：entry 函数。
+- `--entry`：自动发现不够用时，显式固定 entry 函数。
 - `--out`：输出路径，默认 `api/openapi.yaml`。
 - `--title` 和 `--version`：OpenAPI info metadata。
 - `--server`：可重复传入的 OpenAPI server URL。
 - `--workdir`：业务项目根目录。
-- `--route-manifest`：Fox route manifest 文件。
+- `--filter`：可重复传入的 operation 过滤表达式，例如
+  `--filter "x-public != false"`。
+- `--prune-unused-components`：过滤后删除不再被引用的 components。
 
 高级 flags 仍然保留给脚本和特殊项目使用，但默认 help 中隐藏：`--format`、
 `--source`、`--include-test-files`、`--metadata-hook`、`--entry-config-loader`、
-`--entry-config-path`、`--keep-driver` 和 `--verbose`。
+`--entry-config-path`、`--route-manifest`、`--keep-driver` 和 `--verbose`。
 
 `serve` 还支持 `--addr`、可重复传入的 `--ui`、`--watch` 和 `--open`。
 
@@ -311,6 +348,7 @@ func main() {
 		openapi.Server("https://api.example.com"),
 		openapi.Source([]string{"."}),
 		openapi.Operation("GET", "/users/:id", openapi.Tags("users")),
+		openapi.WithFilters(openapi.PruneUnusedComponents()),
 	)
 
 	openapi.Mount(router, spec)
@@ -344,12 +382,14 @@ for _, warning := range spec.Warnings() {
 - OpenAPI version `3.0.3`
 - `info`、`servers`、顶层 tags 和 security schemes
 - 从已注册 Fox routes 中提取 paths 和 methods
+- 当不适合运行应用时，可读取 route manifest 作为输入
 - 将 `/users/:id` 这样的 Gin 风格路径参数转换为 `/users/{id}`
 - `uri`、`query`、`header`、`json` 和 `form` 请求字段
 - 从源码注释提取 operation 和 schema 描述
-- 显式 operation 和 group metadata
-- JSON、form、string、empty 和 error responses
+- 显式 operation 和 group metadata，包括 security 和 extensions
+- 推断成功响应、显式响应、status wrapper、无 body 成功状态码和默认错误响应
 - 可复用的 component schemas，并支持递归 `$ref`
+- 生成后的 operation 过滤和未使用 component 裁剪
 - 通过 `openapi.RegisterFormatter` 覆盖自定义类型 schema
 
 支持的 validation tags 包括 `required`、`email`、`url`、`uri`、`uuid`、`uuid4`、`min`、`max`、`gte`、`lte`、`gt`、`lt`、`len`、`oneof` 和 `alphanum`。
@@ -385,4 +425,4 @@ Manifest 模式下，先刷新业务应用负责的 manifest，再生成 OpenAPI
 
 ## 当前限制
 
-当前实现有意不生成 DomainEngine 专用的多 host specs、自定义 schema 命名覆盖，也不支持直接从 YAML 配置为 operation 或 group 分配 tags。简单 operation metadata 可使用 handler 注释里的 `openapi:` 块；需要 Go value 时请使用 `metadataHook`。
+当前实现有意不生成 DomainEngine 专用的多 host specs，也不提供自定义 schema 命名覆盖。CLI 过滤目前支持 scalar extension equality 和 component 裁剪；如果需要按 path、method、operation ID、tags 或 deprecated 等条件过滤，请使用 Go filter API。简单 operation metadata 可使用 handler 注释里的 `openapi:` 块；需要 Go value 时请使用 `metadataHook`。

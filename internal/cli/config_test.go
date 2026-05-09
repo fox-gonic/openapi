@@ -19,6 +19,8 @@ info:
   title: From Config
   version: 1.2.3
 metadataHook: example.com/app/internal/server.ConfigureOpenAPI
+filters:
+  - x-public != false
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -34,6 +36,8 @@ metadataHook: example.com/app/internal/server.ConfigureOpenAPI
 		EntrySet:            true,
 		MetadataHook:        "",
 		MetadataHookSet:     true,
+		Filters:             []string{"x-product = sandbox"},
+		FiltersSet:          true,
 		IncludeTestFiles:    true,
 		IncludeTestFilesSet: true,
 	})
@@ -57,6 +61,9 @@ metadataHook: example.com/app/internal/server.ConfigureOpenAPI
 	}
 	if cfg.MetadataHook != "" {
 		t.Fatalf("metadataHook override not applied: hook=%q", cfg.MetadataHook)
+	}
+	if len(cfg.Filters) != 1 || cfg.Filters[0] != "x-product = sandbox" {
+		t.Fatalf("filters override not applied: %#v", cfg.Filters)
 	}
 	if !cfg.IncludeTestFiles {
 		t.Fatal("includeTestFiles override not applied")

@@ -192,6 +192,17 @@ func TestRootCommandAcceptsGenerateFlags(t *testing.T) {
 	}
 }
 
+func TestGenerateCommandAcceptsFilterFlags(t *testing.T) {
+	cmd := newGenerateCommand()
+	if err := cmd.ParseFlags([]string{
+		"--filter", "x-public != false",
+		"--filter", "x-product = sandbox",
+		"--prune-unused-components",
+	}); err != nil {
+		t.Fatalf("parse filter flags: %v", err)
+	}
+}
+
 func TestAdvancedGenerateFlagsAreHiddenButUsable(t *testing.T) {
 	cmd := newGenerateCommand()
 	for _, name := range []string{"source", "include-test-files", "metadata-hook", "entry-config-loader", "entry-config-path", "keep-driver", "verbose", "format"} {

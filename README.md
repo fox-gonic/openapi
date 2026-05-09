@@ -15,10 +15,11 @@ unless it uses optional OpenAPI metadata hooks or the library API directly.
 go install github.com/fox-gonic/openapi/cmd/fox-openapi@latest
 ```
 
-For reproducible CI, pin the version used to generate committed specs:
+For reproducible CI, pin the version used to generate committed specs. Replace
+`vX.Y.Z` with the release you want the downstream repository to use:
 
 ```bash
-go install github.com/fox-gonic/openapi/cmd/fox-openapi@v0.3.0
+go install github.com/fox-gonic/openapi/cmd/fox-openapi@vX.Y.Z
 ```
 
 For local development in this repository:
@@ -29,7 +30,7 @@ go run ./cmd/fox-openapi version
 
 ## Quickstart
 
-Expose an entry function that registers routes and returns a `*fox.Engine`.
+Expose one engine factory function that registers routes and returns a `*fox.Engine`.
 It should not call `Run`, open listeners, or start infrastructure that is not
 needed for route registration.
 
@@ -57,8 +58,8 @@ fox-openapi serve --addr 127.0.0.1:8765
 When `entry` is omitted from the config and `--entry` is not passed, the CLI
 scans `sources` (default `./...`) for an exported function whose signature
 matches one of the supported entry shapes. If exactly one is found, it is
-used. If multiple are found, the CLI fails with the candidate list — pick one
-with `--entry` or annotate the canonical entry with a doc comment marker:
+used. If multiple are found, prefer annotating the canonical entry with a doc
+comment marker:
 
 ```go
 // NewEngine builds the production HTTP engine.
@@ -71,15 +72,34 @@ When at least one function carries the `fox-openapi:entry` marker, only
 marked candidates are considered, so adding the marker disambiguates without
 deleting other entry-shaped helpers.
 
+`--entry` is still available for scripts, CI, and unusual layouts that need to
+pin the function explicitly:
+
+```bash
+fox-openapi generate \
+  --entry github.com/acme/myapp/internal/server.NewEngine
+```
+
+Supported entry signatures are:
+
+```go
+func NewEngine() *fox.Engine
+func NewEngine() (*fox.Engine, error)
+func NewEngine(context.Context) *fox.Engine
+func NewEngine(context.Context) (*fox.Engine, error)
+func NewEngine(context.Context, *Config) *fox.Engine
+func NewEngine(context.Context, *Config) (*fox.Engine, error)
+```
+
 `serve` exposes `/openapi.yaml`, `/openapi.json`, `/docs`, `/scalar`, and
-`/redoc` with embedded offline UI assets.
+`/redoc` with embedded offline UI assets. It watches Go files by default and
+regenerates the preview when source changes.
 
 For small projects, no config file is required. Pass flags only when you want
-to override defaults:
+to override output or metadata defaults:
 
 ```bash
 fox-openapi \
-  --entry github.com/acme/myapp/internal/server.NewEngine \
   --out api/openapi.yaml \
   --title "Acme API"
 ```
@@ -87,12 +107,12 @@ fox-openapi \
 Use `fox-openapi init` only when you want to commit a config file for shared
 metadata such as title, servers, tags, security schemes, or entry config.
 
-The CLI builds an isolated temporary driver. For basic generation, the
-application module does not need a `tools.go` file or a committed direct
-`github.com/fox-gonic/openapi` requirement; the driver build resolves that
-temporary dependency and restores `go.mod`/`go.sum` afterward. Add a direct
-requirement only when application code imports OpenAPI metadata hooks or
-library APIs.
+The CLI builds an isolated temporary driver for entry-based generation. For
+basic generation, the application module does not need a `tools.go` file or a
+committed direct `github.com/fox-gonic/openapi` requirement; the driver build
+resolves that temporary dependency and restores `go.mod`/`go.sum` afterward.
+Add a direct requirement only when application code imports OpenAPI metadata
+hooks or library APIs.
 
 ## Route Manifest Mode
 
@@ -154,42 +174,6 @@ loads the application packages from `workdir` to enrich request and response
 types, including aliases, generic wrappers, and handlers in `_test.go` when
 `includeTestFiles` is enabled.
 
-## Entry Functions
-
-`entry` must name an exported function with one of these signatures:
-
-```go
-func NewEngine() *fox.Engine
-func NewEngine() (*fox.Engine, error)
-func NewEngine(context.Context) *fox.Engine
-func NewEngine(context.Context) (*fox.Engine, error)
-func NewEngine(context.Context, *Config) *fox.Engine
-func NewEngine(context.Context, *Config) (*fox.Engine, error)
-```
-
-For config-taking entries, provide an `entryConfig.path` and fox-openapi will
-use the entry config type's package-level `Load(string) (*Config, error)`
-function when it exists:
-
-```yaml
-entryConfig:
-  path: config.yaml
-```
-
-Use `entryConfig.loader` only when the loader is not the standard `Load`
-function or lives outside the config package:
-
-```yaml
-entryConfig:
-  loader: github.com/acme/myapp/internal/config.LoadForOpenAPI
-  path: config.yaml
-```
-
-This keeps the normal production `NewEngine(context.Context, *Config)` usable
-for OpenAPI generation without adding route-only branches just for the tool.
-When `entryConfig` is omitted entirely, fox-openapi still passes `nil` for
-compatibility with existing projects.
-
 ## Path resolution
 
 Paths follow standard go-tooling conventions:
@@ -198,7 +182,7 @@ Paths follow standard go-tooling conventions:
   to the **current working directory** (where you invoked the command).
 - **YAML fields** (`out`, `entryConfig.path`, `workdir`): relative to the
   **directory containing the config file**, so `fox-openapi.yaml` and the
-  artefacts it points to keep a stable layout regardless of where you run.
+  artifacts it points to keep a stable layout regardless of where you run.
 - **Positional path** (`fox-openapi generate ./internal/aone`): narrows where
   the CLI **looks for the entry function**. It does **not** narrow source
   scanning — `sources` (default `./...`) still drives comment extraction so
@@ -211,6 +195,63 @@ cd ~/myapp
 fox-openapi generate internal/aone --out api/openapi.yaml
 # wrote ~/myapp/api/openapi.yaml   ← relative to CWD, not the scanned dir
 ```
+
+## Filtered Specs
+
+fox-openapi can derive narrower OpenAPI documents from the full generated
+contract. The first supported CLI shape is intentionally simple: remove
+operations whose extension has a specific scalar value, then optionally prune
+components that are no longer referenced.
+
+For example, handlers can mark internal operations in source comments:
+
+```go
+// List API keys.
+//
+// openapi:
+//
+//	x-public: false
+func listAPIKeys(ctx *fox.Context) (ListAPIKeysResponse, error) {
+	return ListAPIKeysResponse{}, nil
+}
+```
+
+Then generate a public-only spec:
+
+```bash
+fox-openapi generate \
+  --out api/public.openapi.yaml \
+  --filter "x-public != false" \
+  --filter "x-product = sandbox || x-product = account" \
+  --prune-unused-components
+```
+
+The same settings can live in `fox-openapi.yaml`:
+
+```yaml
+out: api/public.openapi.yaml
+filters:
+  - x-public != false
+  - x-product = sandbox || x-product = account
+pruneUnusedComponents: true
+```
+
+The library API exposes the generic pipeline directly:
+
+```go
+spec := openapi.New(engine,
+	openapi.WithFilters(
+		openapi.FilterOperations(func(op openapi.OperationContext) bool {
+			return op.ExtensionBoolDefault("x-public", true)
+		}),
+		openapi.PruneUnusedComponents(),
+	),
+)
+```
+
+Filtering is a post-generation step. Explicit metadata, inferred responses, and
+source comment enrichment still happen first, so derived specs keep the same
+contract semantics as the full document.
 
 ## Config
 
@@ -242,8 +283,16 @@ Supported config keys:
 - `servers`: list of `url` and optional `description`.
 - `tags`: top-level OpenAPI tag registry.
 - `securitySchemes`: serializable HTTP, API key, OAuth2, or OpenID Connect schemes.
+- `filters`: operation filter expressions. Supported operators are `=`, `==`,
+  and `!=`. Use `||` inside one expression for OR; repeat filters to combine
+  expressions with AND.
+- `pruneUnusedComponents`: remove components no longer referenced after filters.
 - `metadataHook`: optional advanced Go hook.
-- `entryConfig`: optional `loader` and `path` for config-taking entries.
+- `entryConfig`: optional `path` and `loader` for config-taking entries. When
+  `path` is set, fox-openapi first looks for a package-level
+  `Load(string) (*Config, error)` function in the config type's package; set
+  `loader` only when loading needs a non-standard function. When omitted,
+  config-taking entries receive `nil` for compatibility.
 
 CLI flags override config values. Config values override defaults.
 
@@ -251,8 +300,8 @@ CLI flags override config values. Config values override defaults.
 
 ```bash
 fox-openapi init --entry internal/server.NewEngine --title "Acme API"
-fox-openapi --entry github.com/acme/myapp/internal/server.NewEngine --out api/openapi.yaml --title "Acme API"
-fox-openapi generate --entry github.com/acme/myapp/internal/server.NewEngine --out api/openapi.yaml --title "Acme API"
+fox-openapi --out api/openapi.yaml --title "Acme API"
+fox-openapi generate --entry github.com/acme/myapp/internal/server.NewEngine
 fox-openapi generate --route-manifest api/routes.manifest.json --out api/openapi.yaml --title "Acme API"
 fox-openapi check
 fox-openapi serve --addr 127.0.0.1:8765
@@ -262,17 +311,20 @@ fox-openapi version
 `fox-openapi`, `generate`, `check`, and `serve` share the common config flags:
 
 - `--config`: config file path, default `fox-openapi.yaml`.
-- `--entry`: entry function.
+- `--entry`: explicitly pin the entry function when auto-discovery is not enough.
 - `--out`: output path, default `api/openapi.yaml`.
 - `--title` and `--version`: OpenAPI info metadata.
 - `--server`: repeatable OpenAPI server URL.
 - `--workdir`: user project root.
-- `--route-manifest`: Fox route manifest file.
+- `--filter`: repeatable operation filter expression, for example
+  `--filter "x-public != false"`.
+- `--prune-unused-components`: remove components no longer referenced after
+  filters.
 
 Advanced flags remain available for scripts and unusual projects but are hidden
 from normal help: `--format`, `--source`, `--include-test-files`,
 `--metadata-hook`, `--entry-config-loader`, `--entry-config-path`,
-`--keep-driver`, and `--verbose`.
+`--route-manifest`, `--keep-driver`, and `--verbose`.
 
 `serve` also supports `--addr`, repeatable `--ui`, `--watch`, and `--open`.
 
@@ -353,6 +405,7 @@ func main() {
 		openapi.Server("https://api.example.com"),
 		openapi.Source([]string{"."}),
 		openapi.Operation("GET", "/users/:id", openapi.Tags("users")),
+		openapi.WithFilters(openapi.PruneUnusedComponents()),
 	)
 
 	openapi.Mount(router, spec)
@@ -387,12 +440,15 @@ The generator covers:
 - OpenAPI version `3.0.3`
 - `info`, `servers`, top-level tags, and security schemes
 - paths and methods from registered Fox routes
+- route manifest input when running the application is not desirable
 - Gin-style path parameters such as `/users/:id` as `/users/{id}`
 - `uri`, `query`, `header`, `json`, and `form` request fields
 - operation and schema descriptions from source comments
-- explicit operation and group metadata
-- JSON, form, string, empty, and error responses
+- explicit operation and group metadata, including security and extensions
+- inferred success responses, explicit responses, status wrappers, no-body
+  success statuses, and default error responses
 - reusable component schemas with recursive `$ref` support
+- post-generation operation filters and unused component pruning
 - custom type schema overrides through `openapi.RegisterFormatter`
 
 Supported validation tags include `required`, `email`, `url`, `uri`, `uuid`,
@@ -433,6 +489,8 @@ For manifest mode, refresh the application-owned manifest before generating:
 ## Current Limitations
 
 The current implementation intentionally does not generate DomainEngine-specific
-multi-host specs, custom schema naming overrides, or operation/group tag
-assignment directly from YAML config. Use handler comment `openapi:` blocks for
-simple operation metadata and `metadataHook` when metadata needs Go values.
+multi-host specs or custom schema naming overrides. CLI filtering currently
+supports scalar extension equality plus component pruning; use the Go filter API
+for richer predicates such as path, method, operation ID, tags, or deprecation.
+Use handler comment `openapi:` blocks for simple operation metadata and
+`metadataHook` when metadata needs Go values.
