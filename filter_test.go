@@ -24,6 +24,27 @@ func TestFilterOperationsKeepsMatchingOperationsAndPrunesEmptyPaths(t *testing.T
 	require.Nil(t, spec.Paths.Value("/internal"))
 }
 
+func TestExcludeOperationsWithExtensionValueHandlesNonComparableValues(t *testing.T) {
+	spec := &openapi3.T{Paths: openapi3.NewPaths()}
+	spec.Paths.Set("/internal", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "internal",
+		Extensions:  map[string]any{"x-filter": map[string]any{"scope": "internal"}},
+	}})
+	spec.Paths.Set("/public", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "public",
+		Extensions:  map[string]any{"x-filter": map[string]any{"scope": "public"}},
+	}})
+
+	err := openapi.ApplyFilters(spec, openapi.ExcludeOperationsWithExtensionValue(
+		"x-filter",
+		map[string]any{"scope": "internal"},
+	))
+
+	require.NoError(t, err)
+	require.Nil(t, spec.Paths.Value("/internal"))
+	require.NotNil(t, spec.Paths.Value("/public"))
+}
+
 func TestPruneUnusedComponentsRemovesFilteredOperationRefs(t *testing.T) {
 	spec := &openapi3.T{
 		Paths: openapi3.NewPaths(),

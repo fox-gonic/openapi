@@ -92,7 +92,7 @@ func ExcludeOperationsWithExtensionValue(extension string, value any) Filter {
 		if !ok {
 			return true
 		}
-		if got == value {
+		if scalarEqual(got, value) {
 			return false
 		}
 		delete(op.Operation.Extensions, extension)
