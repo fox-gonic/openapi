@@ -78,6 +78,8 @@ func NewEngine(context.Context, *Config) *fox.Engine
 func NewEngine(context.Context, *Config) (*fox.Engine, error)
 ```
 
+这里的 `*Config` 表示你的应用自己的配置结构体类型，不是 fox-openapi 提供的固定类型。
+
 `serve` 会暴露 `/openapi.yaml`、`/openapi.json`、`/docs`、`/scalar` 和 `/redoc`，并使用内置的离线 UI 资源。它默认监听 Go 文件变化，并在源码变化后重新生成预览。
 
 配置简单的项目不需要创建配置文件。只有想覆盖输出路径或 metadata 默认值时才需要传 flags：

@@ -91,6 +91,9 @@ func NewEngine(context.Context, *Config) *fox.Engine
 func NewEngine(context.Context, *Config) (*fox.Engine, error)
 ```
 
+`*Config` represents your application's own configuration struct type, not a
+fox-openapi-provided type.
+
 `serve` exposes `/openapi.yaml`, `/openapi.json`, `/docs`, `/scalar`, and
 `/redoc` with embedded offline UI assets. It watches Go files by default and
 regenerates the preview when source changes.
