@@ -452,6 +452,8 @@ func collectComponentRefStrings(value any, addRef func(string)) {
 	case string:
 		if strings.HasPrefix(typed, "#/components/") {
 			addRef(typed)
+		} else if typed != "" && !strings.Contains(typed, "://") {
+			addRef("#/components/schemas/" + escapeJSONPointer(typed))
 		}
 	case map[string]any:
 		for _, child := range typed {

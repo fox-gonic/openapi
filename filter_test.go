@@ -173,6 +173,39 @@ func TestPruneUnusedComponentsKeepsDiscriminatorMappingRefs(t *testing.T) {
 	require.NotContains(t, spec.Components.Schemas, "Unused")
 }
 
+func TestPruneUnusedComponentsKeepsDiscriminatorMappingSchemaNames(t *testing.T) {
+	pet := openapi3.NewObjectSchema()
+	pet.Discriminator = &openapi3.Discriminator{
+		PropertyName: "kind",
+		Mapping: openapi3.StringMap[openapi3.MappingRef]{
+			"cat": {Ref: "Cat"},
+		},
+	}
+	spec := &openapi3.T{
+		Paths: openapi3.NewPaths(),
+		Components: &openapi3.Components{
+			Schemas: openapi3.Schemas{
+				"Pet":    openapi3.NewSchemaRef("", pet),
+				"Cat":    openapi3.NewSchemaRef("", openapi3.NewObjectSchema()),
+				"Unused": openapi3.NewSchemaRef("", openapi3.NewObjectSchema()),
+			},
+		},
+	}
+	spec.Paths.Set("/pets", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "pets",
+		Responses: openapi3.NewResponses(openapi3.WithStatus(http.StatusOK, &openapi3.ResponseRef{Value: openapi3.NewResponse().
+			WithDescription("OK").
+			WithJSONSchemaRef(&openapi3.SchemaRef{Ref: "#/components/schemas/Pet"})})),
+	}})
+
+	err := openapi.ApplyFilters(spec, openapi.PruneUnusedComponents())
+
+	require.NoError(t, err)
+	require.Contains(t, spec.Components.Schemas, "Pet")
+	require.Contains(t, spec.Components.Schemas, "Cat")
+	require.NotContains(t, spec.Components.Schemas, "Unused")
+}
+
 func TestPruneUnusedComponentsKeepsOperationRefComponentRefs(t *testing.T) {
 	spec := &openapi3.T{
 		Paths: openapi3.NewPaths(),
