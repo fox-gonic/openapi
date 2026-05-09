@@ -144,9 +144,35 @@ func (g *Generator) ensureGenerated() error {
 	g.addSourceWarnings()
 	g.addHTTPErrorSchema()
 	g.generate()
-	g.err = ApplyFilters(g.spec, g.filters...)
+	if len(g.filters) > 0 {
+		filtered, err := cloneSpec(g.spec)
+		if err != nil {
+			g.err = fmt.Errorf("prepare filtered spec: %w", err)
+			g.generated = true
+			return g.err
+		}
+		if err := ApplyFilters(filtered, g.filters...); err != nil {
+			g.err = err
+			g.generated = true
+			return g.err
+		}
+		g.spec = filtered
+	}
+	g.err = nil
 	g.generated = true
 	return g.err
+}
+
+func cloneSpec(spec *openapi3.T) (*openapi3.T, error) {
+	data, err := json.Marshal(spec)
+	if err != nil {
+		return nil, err
+	}
+	var clone openapi3.T
+	if err := json.Unmarshal(data, &clone); err != nil {
+		return nil, err
+	}
+	return &clone, nil
 }
 
 // Warnings returns non-fatal generation warnings, triggering generation if it

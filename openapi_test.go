@@ -327,6 +327,21 @@ func TestSpecErrReturnsGenerationFailure(t *testing.T) {
 	require.ErrorContains(t, err, "filter failed")
 }
 
+func TestFailedFilterDoesNotCachePartiallyMutatedSpec(t *testing.T) {
+	engine := fox.New()
+	engine.GET("/users/:id", getUser)
+
+	g := openapi.New(engine, openapi.WithFilters(func(spec *openapi3.T) error {
+		spec.Paths.Delete("/users/{id}")
+		return errors.New("filter failed")
+	}))
+
+	spec, err := g.SpecErr()
+
+	require.ErrorContains(t, err, "filter failed")
+	require.NotNil(t, spec.Paths.Value("/users/{id}"))
+}
+
 func TestMountExcludesSpecEndpointsFromGeneratedPaths(t *testing.T) {
 	engine := fox.New()
 	engine.GET("/users/:id", getUser)

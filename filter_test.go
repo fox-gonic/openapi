@@ -182,6 +182,27 @@ func TestFilterOperationExpressionKeepsQuotedOrLiteralTogether(t *testing.T) {
 	require.Nil(t, spec.Paths.Value("/simple"))
 }
 
+func TestFilterOperationExpressionSupportsEscapedSingleQuote(t *testing.T) {
+	spec := &openapi3.T{Paths: openapi3.NewPaths()}
+	spec.Paths.Set("/publisher", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "publisher",
+		Extensions:  map[string]any{"x-name": "O'Reilly"},
+	}})
+	spec.Paths.Set("/other", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "other",
+		Extensions:  map[string]any{"x-name": "Other"},
+	}})
+
+	nameFilter, err := openapi.FilterOperationExpression(`x-name = 'O\'Reilly'`)
+	require.NoError(t, err)
+
+	err = openapi.ApplyFilters(spec, nameFilter)
+
+	require.NoError(t, err)
+	require.NotNil(t, spec.Paths.Value("/publisher"))
+	require.Nil(t, spec.Paths.Value("/other"))
+}
+
 func TestFilterOperationExpressionRejectsUnsupportedExpression(t *testing.T) {
 	_, err := openapi.FilterOperationExpression("x-public > false")
 

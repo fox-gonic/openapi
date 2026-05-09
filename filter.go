@@ -177,7 +177,7 @@ func splitFilterAlternatives(expression string) ([]string, error) {
 	for i := 0; i < len(expression); i++ {
 		c := expression[i]
 		if quote != 0 {
-			if quote == '"' && c == '\\' {
+			if c == '\\' {
 				i++
 				continue
 			}
@@ -252,9 +252,26 @@ func stripQuotes(value string) (string, bool) {
 		}
 	}
 	if first == '\'' && last == '\'' {
-		return value[1 : len(value)-1], true
+		return unquoteSingleQuoted(value[1 : len(value)-1]), true
 	}
 	return "", false
+}
+
+func unquoteSingleQuoted(value string) string {
+	var out strings.Builder
+	out.Grow(len(value))
+	for i := 0; i < len(value); i++ {
+		if value[i] == '\\' && i+1 < len(value) {
+			next := value[i+1]
+			if next == '\'' || next == '\\' {
+				out.WriteByte(next)
+				i++
+				continue
+			}
+		}
+		out.WriteByte(value[i])
+	}
+	return out.String()
 }
 
 func (g operationFilterConditionGroup) match(op OperationContext) bool {
