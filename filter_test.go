@@ -1,6 +1,7 @@
 package openapi_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -43,6 +44,24 @@ func TestExcludeOperationsWithExtensionValueHandlesNonComparableValues(t *testin
 	require.NoError(t, err)
 	require.Nil(t, spec.Paths.Value("/internal"))
 	require.NotNil(t, spec.Paths.Value("/public"))
+}
+
+func TestExcludeOperationsWithExtensionValueHandlesNumericScalarTypes(t *testing.T) {
+	spec := &openapi3.T{Paths: openapi3.NewPaths()}
+	spec.Paths.Set("/created", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "created",
+		Extensions:  map[string]any{"x-status": json.Number("201")},
+	}})
+	spec.Paths.Set("/accepted", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "accepted",
+		Extensions:  map[string]any{"x-status": json.Number("202")},
+	}})
+
+	err := openapi.ApplyFilters(spec, openapi.ExcludeOperationsWithExtensionValue("x-status", int64(201)))
+
+	require.NoError(t, err)
+	require.Nil(t, spec.Paths.Value("/created"))
+	require.NotNil(t, spec.Paths.Value("/accepted"))
 }
 
 func TestPruneUnusedComponentsRemovesFilteredOperationRefs(t *testing.T) {
