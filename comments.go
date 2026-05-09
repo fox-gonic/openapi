@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -9,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/goccy/go-yaml"
 )
 
 // commentDocs holds Go doc comments extracted from source so they can enrich
@@ -19,17 +22,28 @@ import (
 // Field lookup is keyed by (typeName, fieldName) — typeName uses the package
 // name as it appears in source (the runtime PkgPath last segment).
 type commentDocs struct {
-	funcsByQualified  map[string]string
-	funcsByShort      map[string]string
+	funcsByQualified  map[string]funcComment
+	funcsByShort      map[string]funcComment
 	statusByQualified map[string]int
 	fieldsByType      map[string]map[string]string
+	warnings          []string
 	includeTests      bool
+}
+
+type funcComment struct {
+	text string
+	doc  operationDoc
+}
+
+type openAPICommentBlock struct {
+	HumanDocumentation string
+	OpenAPIMetadata    string
 }
 
 func newCommentDocs() *commentDocs {
 	return &commentDocs{
-		funcsByQualified:  make(map[string]string),
-		funcsByShort:      make(map[string]string),
+		funcsByQualified:  make(map[string]funcComment),
+		funcsByShort:      make(map[string]funcComment),
 		statusByQualified: make(map[string]int),
 		fieldsByType:      make(map[string]map[string]string),
 	}
@@ -144,10 +158,13 @@ func (d *commentDocs) addFunc(pkgName string, decl *ast.FuncDecl, imports map[st
 	}
 
 	if decl.Doc != nil {
-		text := commentText(decl.Doc)
-		d.funcsByQualified[qualified] = text
+		comment, err := parseFuncComment(commentText(decl.Doc))
+		if err != nil {
+			d.warnings = append(d.warnings, fmt.Sprintf("invalid openapi comment block for %s: %v", qualified, err))
+		}
+		d.funcsByQualified[qualified] = comment
 		// Short name is best-effort fallback — last writer wins on collision.
-		d.funcsByShort[short] = text
+		d.funcsByShort[short] = comment
 	}
 
 	if status, ok := inferredReturnStatus(decl, imports); ok {
@@ -236,18 +253,35 @@ func fieldCommentText(field *ast.Field) string {
 // qualified name first (after stripping -fm and .funcN suffixes) and falls
 // back to the trailing identifier.
 func (d *commentDocs) funcDoc(runtimeName string) string {
-	if d == nil || runtimeName == "" {
+	comment, ok := d.funcComment(runtimeName)
+	if !ok {
 		return ""
 	}
+	return comment.text
+}
+
+func (d *commentDocs) funcOperationDoc(runtimeName string) (operationDoc, bool) {
+	comment, ok := d.funcComment(runtimeName)
+	if !ok {
+		return operationDoc{}, false
+	}
+	return comment.doc, !comment.doc.empty()
+}
+
+func (d *commentDocs) funcComment(runtimeName string) (funcComment, bool) {
+	if d == nil || runtimeName == "" {
+		return funcComment{}, false
+	}
 	qualified := normalizeRuntimeFuncName(runtimeName)
-	if text, ok := d.funcsByQualified[qualified]; ok {
-		return text
+	if comment, ok := d.funcsByQualified[qualified]; ok {
+		return comment, true
 	}
 	short := qualified
 	if idx := strings.LastIndex(short, "."); idx >= 0 {
 		short = short[idx+1:]
 	}
-	return d.funcsByShort[short]
+	comment, ok := d.funcsByShort[short]
+	return comment, ok
 }
 
 func (d *commentDocs) returnStatus(runtimeName string) (int, bool) {
@@ -302,6 +336,155 @@ func allDigits(s string) bool {
 
 func commentText(group *ast.CommentGroup) string {
 	return strings.TrimSpace(group.Text())
+}
+
+func parseFuncComment(text string) (funcComment, error) {
+	block := splitOpenAPICommentBlock(text)
+	comment := funcComment{text: block.HumanDocumentation}
+	if block.OpenAPIMetadata == "" {
+		return comment, nil
+	}
+
+	var values map[string]any
+	if err := yaml.Unmarshal([]byte(block.OpenAPIMetadata), &values); err != nil {
+		return comment, err
+	}
+	comment.doc = operationDocFromCommentBlock(values)
+	return comment, nil
+}
+
+func splitOpenAPICommentBlock(text string) openAPICommentBlock {
+	lines := strings.Split(text, "\n")
+	humanLines := make([]string, 0, len(lines))
+	metadataLines := make([]string, 0, len(lines))
+	inBlock := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inBlock && trimmed == "openapi:" {
+			inBlock = true
+			continue
+		}
+		if !inBlock {
+			humanLines = append(humanLines, line)
+			continue
+		}
+		if trimmed == "" {
+			metadataLines = append(metadataLines, "")
+			continue
+		}
+		if line == strings.TrimLeft(line, " \t") {
+			humanLines = append(humanLines, line)
+			inBlock = false
+			continue
+		}
+		metadataLines = append(metadataLines, line)
+	}
+
+	metadataLines = dedentLines(metadataLines)
+	return openAPICommentBlock{
+		HumanDocumentation: strings.TrimSpace(strings.Join(humanLines, "\n")),
+		OpenAPIMetadata:    strings.TrimSpace(strings.Join(metadataLines, "\n")),
+	}
+}
+
+func dedentLines(lines []string) []string {
+	indent := commonIndent(lines)
+	if indent == "" {
+		return lines
+	}
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = strings.TrimPrefix(line, indent)
+	}
+	return out
+}
+
+func commonIndent(lines []string) string {
+	prefix := ""
+	found := false
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		indent := leadingWhitespace(line)
+		if !found {
+			prefix = indent
+			found = true
+			continue
+		}
+		prefix = commonPrefix(prefix, indent)
+	}
+	return prefix
+}
+
+func leadingWhitespace(line string) string {
+	return line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+}
+
+func commonPrefix(a, b string) string {
+	max := len(a)
+	if len(b) < max {
+		max = len(b)
+	}
+	for i := 0; i < max; i++ {
+		if a[i] != b[i] {
+			return a[:i]
+		}
+	}
+	return a[:max]
+}
+
+func operationDocFromCommentBlock(values map[string]any) operationDoc {
+	doc := operationDoc{}
+	for key, value := range values {
+		switch key {
+		case "summary":
+			if text, ok := value.(string); ok {
+				doc.Summary = text
+			}
+		case "description":
+			if text, ok := value.(string); ok {
+				doc.Description = text
+			}
+		case "operationId":
+			if text, ok := value.(string); ok {
+				doc.OperationID = text
+			}
+		case "tags":
+			if tags, ok := stringSlice(value); ok {
+				doc.Tags = tags
+			}
+		case "deprecated":
+			if deprecated, ok := value.(bool); ok {
+				doc.Deprecated = &deprecated
+			}
+		default:
+			if strings.HasPrefix(key, "x-") {
+				if doc.Extensions == nil {
+					doc.Extensions = make(map[string]any)
+				}
+				doc.Extensions[key] = value
+			}
+		}
+	}
+	return doc
+}
+
+func stringSlice(value any) ([]string, bool) {
+	values, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
+	out := make([]string, 0, len(values))
+	for _, item := range values {
+		text, ok := item.(string)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, text)
+	}
+	return out, true
 }
 
 func firstParagraph(text string) string {

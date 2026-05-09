@@ -121,6 +121,7 @@ func (g *Generator) ensureGenerated() {
 	if g.generated {
 		return
 	}
+	g.addSourceWarnings()
 	g.addHTTPErrorSchema()
 	g.generate()
 	g.generated = true
@@ -135,6 +136,15 @@ func (g *Generator) Warnings() []string {
 
 func (g *Generator) warnf(format string, args ...any) {
 	g.warnings = append(g.warnings, fmt.Sprintf(format, args...))
+}
+
+func (g *Generator) addSourceWarnings() {
+	if g.docs == nil {
+		return
+	}
+	for _, warning := range g.docs.warnings {
+		g.warnf("%s", warning)
+	}
 }
 
 // JSON serializes the generated spec as formatted JSON.
@@ -179,12 +189,7 @@ func (g *Generator) generateManifestRoute(route RouteManifestRoute) {
 		op.OperationID = sanitizeName(route.Method + "_" + route.Path)
 	}
 	op.Responses = openapi3.NewResponses()
-	if g.docs != nil {
-		if text := g.docs.funcDoc(route.HandlerSymbol()); text != "" {
-			op.Summary = firstParagraph(text)
-			op.Description = text
-		}
-	}
+	g.applyHandlerDoc(op, route.HandlerSymbol())
 
 	if input, ok := manifestRequestBody(route); ok {
 		g.addManifestInput(op, route, input)
@@ -212,6 +217,7 @@ func (g *Generator) generateManifestRoute(route RouteManifestRoute) {
 	if manifestRouteReturnsError(route) {
 		op.Responses.Set("default", &openapi3.ResponseRef{Ref: "#/components/responses/HTTPError"})
 	}
+	g.applyOperationDoc(op, route.Method, route.Path)
 	g.spec.AddOperation(openAPIPath(route.Path), route.Method, op)
 }
 
@@ -620,12 +626,7 @@ func (g *Generator) generateRoute(route fox.RouteInfo) {
 	op := openapi3.NewOperation()
 	op.OperationID = operationID(route)
 	op.Responses = openapi3.NewResponses()
-	if g.docs != nil {
-		if text := g.docs.funcDoc(route.HandlerName); text != "" {
-			op.Summary = firstParagraph(text)
-			op.Description = text
-		}
-	}
+	g.applyHandlerDoc(op, route.HandlerName)
 
 	if route.HandlerType.NumIn() == 2 {
 		g.addInput(op, route, route.HandlerType.In(1))
@@ -635,6 +636,19 @@ func (g *Generator) generateRoute(route fox.RouteInfo) {
 	g.applyOperationDoc(op, route.Method, route.Path)
 
 	g.spec.AddOperation(openAPIPath(route.Path), route.Method, op)
+}
+
+func (g *Generator) applyHandlerDoc(op *openapi3.Operation, handlerName string) {
+	if g.docs == nil {
+		return
+	}
+	if text := g.docs.funcDoc(handlerName); text != "" {
+		op.Summary = firstParagraph(text)
+		op.Description = text
+	}
+	if doc, ok := g.docs.funcOperationDoc(handlerName); ok {
+		g.applyDoc(op, doc)
+	}
 }
 
 func (g *Generator) addMissingPathParams(op *openapi3.Operation, path string) {

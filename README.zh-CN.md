@@ -240,21 +240,32 @@ fox-openapi version
 
 ## Metadata
 
-生成器会读取源码中的普通 Go 注释，用来填充 operation summary、operation description 和 schema field description。不需要额外的 `doc` tag。
+生成器会读取源码中的普通 Go 注释，用来填充 operation summary、operation
+description 和 schema field description。不需要额外的 `doc` tag。handler 注释也可以包含
+`openapi:` 块来提供 operation 级 metadata；如果块里没有写 `summary` 或
+`description`，仍会使用 handler 原本的普通注释。
 
 ```go
 type CreateUserRequest struct {
-	// Display name for the new user.
+	// 新用户的展示名称。
 	Name string `json:"name" binding:"required"`
 }
 
-// Create user.
+// 创建用户。
 //
-// Creates a user and returns the persisted representation.
+// 创建用户并返回持久化后的表示。
+//
+// openapi:
+//   x-public: true
+//   x-audience: external
 func createUser(ctx *fox.Context, req CreateUserRequest) (UserResponse, error) {
 	return UserResponse{}, nil
 }
 ```
+
+`openapi:` 块不会出现在生成后的 description 中。它支持 `x-public`、
+`x-audience` 等 OpenAPI extension 字段，以及 `summary`、`description`、
+`operationId`、`tags`、`deprecated` 等简单 operation 字段。
 
 如果 metadata 需要 Go value，可以添加一个小的可选 hook：
 
@@ -374,4 +385,4 @@ Manifest 模式下，先刷新业务应用负责的 manifest，再生成 OpenAPI
 
 ## 当前限制
 
-当前实现有意不生成 DomainEngine 专用的多 host specs、自定义 schema 命名覆盖，也不支持直接从 YAML 配置为 operation 或 group 分配 tags。路由级 metadata 请使用 `metadataHook`。
+当前实现有意不生成 DomainEngine 专用的多 host specs、自定义 schema 命名覆盖，也不支持直接从 YAML 配置为 operation 或 group 分配 tags。简单 operation metadata 可使用 handler 注释里的 `openapi:` 块；需要 Go value 时请使用 `metadataHook`。

@@ -21,6 +21,14 @@ func manifestStatusResponseWithStatus[T any](status int, data T) manifestStatusR
 	}
 }
 
+// Create manifest template.
+//
+// Creates a template from a route manifest.
+//
+// openapi:
+//
+//	x-public: true
+//	x-audience: external
 func createManifestTemplateForRouteManifest() (manifestStatusResponse[manifestTemplatePayload], error) {
 	return manifestStatusResponseWithStatus(http.StatusAccepted, manifestTemplatePayload{}), nil
 }
@@ -145,6 +153,19 @@ func TestNewFromRouteManifestUnwrapsStatusResponseBody(t *testing.T) {
 	response := spec.Paths.Value("/sandbox/templates").Post.Responses.Value("202")
 	if response == nil {
 		t.Fatalf("missing 202 response")
+	}
+	operation := spec.Paths.Value("/sandbox/templates").Post
+	if operation.Summary != "Create manifest template." {
+		t.Fatalf("summary = %q", operation.Summary)
+	}
+	if operation.Description != "Create manifest template.\n\nCreates a template from a route manifest." {
+		t.Fatalf("description = %q", operation.Description)
+	}
+	if operation.Extensions["x-public"] != true {
+		t.Fatalf("x-public = %#v", operation.Extensions["x-public"])
+	}
+	if operation.Extensions["x-audience"] != "external" {
+		t.Fatalf("x-audience = %#v", operation.Extensions["x-audience"])
 	}
 	content := response.Value.Content.Get("application/json")
 	if content == nil {
