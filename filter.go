@@ -80,9 +80,7 @@ func FilterOperations(keep func(OperationContext) bool) Filter {
 }
 
 // ExcludeOperationsWithExtensionValue removes operations whose extension equals
-// the provided scalar value. Matching extensions are also removed from retained
-// operations so project-private routing metadata does not leak into derived
-// documents.
+// the provided scalar value.
 func ExcludeOperationsWithExtensionValue(extension string, value any) Filter {
 	return FilterOperations(func(op OperationContext) bool {
 		if op.Operation == nil || op.Operation.Extensions == nil {
@@ -94,6 +92,16 @@ func ExcludeOperationsWithExtensionValue(extension string, value any) Filter {
 		}
 		if scalarEqual(got, value) {
 			return false
+		}
+		return true
+	})
+}
+
+// StripOperationExtension removes an extension from all retained operations.
+func StripOperationExtension(extension string) Filter {
+	return FilterOperations(func(op OperationContext) bool {
+		if op.Operation == nil || op.Operation.Extensions == nil {
+			return true
 		}
 		delete(op.Operation.Extensions, extension)
 		if len(op.Operation.Extensions) == 0 {

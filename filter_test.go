@@ -44,6 +44,7 @@ func TestExcludeOperationsWithExtensionValueHandlesNonComparableValues(t *testin
 	require.NoError(t, err)
 	require.Nil(t, spec.Paths.Value("/internal"))
 	require.NotNil(t, spec.Paths.Value("/public"))
+	require.Contains(t, spec.Paths.Value("/public").Get.Extensions, "x-filter")
 }
 
 func TestExcludeOperationsWithExtensionValueHandlesNumericScalarTypes(t *testing.T) {
@@ -62,6 +63,20 @@ func TestExcludeOperationsWithExtensionValueHandlesNumericScalarTypes(t *testing
 	require.NoError(t, err)
 	require.Nil(t, spec.Paths.Value("/created"))
 	require.NotNil(t, spec.Paths.Value("/accepted"))
+}
+
+func TestStripOperationExtensionRemovesExtensionFromRetainedOperations(t *testing.T) {
+	spec := &openapi3.T{Paths: openapi3.NewPaths()}
+	spec.Paths.Set("/public", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "public",
+		Extensions:  map[string]any{"x-filter": "public", "x-keep": true},
+	}})
+
+	err := openapi.ApplyFilters(spec, openapi.StripOperationExtension("x-filter"))
+
+	require.NoError(t, err)
+	require.NotContains(t, spec.Paths.Value("/public").Get.Extensions, "x-filter")
+	require.Contains(t, spec.Paths.Value("/public").Get.Extensions, "x-keep")
 }
 
 func TestPruneUnusedComponentsRemovesFilteredOperationRefs(t *testing.T) {
