@@ -238,6 +238,27 @@ func TestFilterOperationExpressionMatchesExtensionConditions(t *testing.T) {
 	require.Nil(t, spec.Paths.Value("/public-account"))
 }
 
+func TestFilterOperationExpressionMatchesNumericLiteral(t *testing.T) {
+	spec := &openapi3.T{Paths: openapi3.NewPaths()}
+	spec.Paths.Set("/created", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "created",
+		Extensions:  map[string]any{"x-status": json.Number("201")},
+	}})
+	spec.Paths.Set("/accepted", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "accepted",
+		Extensions:  map[string]any{"x-status": json.Number("202")},
+	}})
+
+	statusFilter, err := openapi.FilterOperationExpression("x-status = 201")
+	require.NoError(t, err)
+
+	err = openapi.ApplyFilters(spec, statusFilter)
+
+	require.NoError(t, err)
+	require.NotNil(t, spec.Paths.Value("/created"))
+	require.Nil(t, spec.Paths.Value("/accepted"))
+}
+
 func TestFilterOperationExpressionSupportsOrConditions(t *testing.T) {
 	spec := &openapi3.T{Paths: openapi3.NewPaths()}
 	spec.Paths.Set("/sandbox", &openapi3.PathItem{Get: &openapi3.Operation{

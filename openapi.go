@@ -106,9 +106,7 @@ func NewFromRouteManifest(manifest RouteManifest, opts ...Option) *Generator {
 // Spec returns the generated OpenAPI model. Call SpecErr or Err when the
 // generator was configured with filters that can fail.
 func (g *Generator) Spec() *openapi3.T {
-	if err := g.ensureGenerated(); err != nil {
-		return nil
-	}
+	_ = g.ensureGenerated()
 	return g.spec
 }
 

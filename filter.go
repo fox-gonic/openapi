@@ -238,6 +238,9 @@ func parseFilterLiteral(value string) any {
 	if unquoted, ok := stripQuotes(value); ok {
 		return unquoted
 	}
+	if number, err := strconv.ParseFloat(value, 64); err == nil {
+		return number
+	}
 	return value
 }
 
