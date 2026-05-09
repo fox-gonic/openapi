@@ -303,18 +303,10 @@ func scalarEqual(left, right any) bool {
 	if reflect.TypeOf(left) == reflect.TypeOf(right) {
 		return reflect.DeepEqual(left, right)
 	}
-	if leftBool, ok := left.(bool); ok {
-		rightBool, ok := right.(bool)
-		return ok && leftBool == rightBool
-	}
-	if leftString, ok := left.(string); ok {
-		rightString, ok := right.(string)
-		return ok && leftString == rightString
-	}
 	leftNumber, leftOK := numericScalar(left)
 	rightNumber, rightOK := numericScalar(right)
-	if leftOK || rightOK {
-		return leftOK && rightOK && leftNumber == rightNumber
+	if leftOK && rightOK {
+		return leftNumber == rightNumber
 	}
 	return false
 }
