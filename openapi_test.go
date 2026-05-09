@@ -2,6 +2,7 @@ package openapi_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -307,6 +308,39 @@ func TestGenerateIsLazyAndPicksUpRoutesAfterNew(t *testing.T) {
 	paths := spec["paths"].(map[string]any)
 	require.Contains(t, paths, "/users/{id}")
 	require.Contains(t, paths, "/users")
+}
+
+func TestSpecErrReturnsGenerationFailure(t *testing.T) {
+	engine := fox.New()
+	engine.GET("/users/:id", getUser)
+
+	g := openapi.New(engine, openapi.WithFilters(func(*openapi3.T) error {
+		return errors.New("filter failed")
+	}))
+
+	spec, err := g.SpecErr()
+
+	require.NotNil(t, spec)
+	require.ErrorContains(t, err, "filter failed")
+	require.ErrorContains(t, g.Err(), "filter failed")
+	_, err = g.WarningsErr()
+	require.ErrorContains(t, err, "filter failed")
+	require.NotNil(t, g.Spec())
+}
+
+func TestFailedFilterDoesNotCachePartiallyMutatedSpec(t *testing.T) {
+	engine := fox.New()
+	engine.GET("/users/:id", getUser)
+
+	g := openapi.New(engine, openapi.WithFilters(func(spec *openapi3.T) error {
+		spec.Paths.Delete("/users/{id}")
+		return errors.New("filter failed")
+	}))
+
+	spec, err := g.SpecErr()
+
+	require.ErrorContains(t, err, "filter failed")
+	require.NotNil(t, spec.Paths.Value("/users/{id}"))
 }
 
 func TestMountExcludesSpecEndpointsFromGeneratedPaths(t *testing.T) {

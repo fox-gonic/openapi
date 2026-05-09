@@ -281,6 +281,7 @@ type commonOptions struct {
 	overrides *cli.Overrides
 	sources   repeatedFlag
 	servers   repeatedFlag
+	filters   repeatedFlag
 }
 
 func newCommonOptions() *commonOptions {
@@ -292,6 +293,8 @@ func configFromOptions(opts *commonOptions) (cli.Config, error) {
 	opts.overrides.SourcesSet = opts.sources.set
 	opts.overrides.Servers = opts.servers.values
 	opts.overrides.ServersSet = opts.servers.set
+	opts.overrides.Filters = opts.filters.values
+	opts.overrides.FiltersSet = opts.filters.set
 	return cli.LoadConfig(*opts.overrides)
 }
 
@@ -305,11 +308,13 @@ func bindCommonFlags(flags *pflag.FlagSet, opts *commonOptions) {
 	flags.StringVar(&o.InfoVersion, "version", "", "OpenAPI info version")
 	flags.Var(&opts.servers, "server", "OpenAPI server URL")
 	flags.Var(&opts.sources, "source", "source path")
+	flags.Var(&opts.filters, "filter", "operation filter expression, e.g. x-public != false")
 	flags.BoolVar(&o.IncludeTestFiles, "include-test-files", false, "include *_test.go")
 	flags.StringVar(&o.MetadataHook, "metadata-hook", "", "metadata hook")
 	flags.StringVar(&o.EntryConfigLoader, "entry-config-loader", "", "entry config loader (optional when config package has Load)")
 	flags.StringVar(&o.EntryConfigPath, "entry-config-path", "", "entry config path")
 	flags.StringVar(&o.RouteManifest, "route-manifest", "", "Fox route manifest path")
+	flags.BoolVar(&o.PruneUnusedComponents, "prune-unused-components", false, "remove components no longer referenced after filtering")
 	flags.StringVar(&o.Workdir, "workdir", ".", "user project root")
 	flags.BoolVar(&o.KeepDriver, "keep-driver", false, "keep generated driver")
 	flags.BoolVar(&o.Verbose, "verbose", false, "verbose output")
@@ -419,6 +424,10 @@ func markOverride(o *cli.Overrides, name string) {
 		o.EntryConfigPathSet = true
 	case "route-manifest":
 		o.RouteManifestSet = true
+	case "filter":
+		o.FiltersSet = true
+	case "prune-unused-components":
+		o.PruneUnusedComponentsSet = true
 	case "workdir":
 		o.WorkdirSet = true
 	case "keep-driver":

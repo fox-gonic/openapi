@@ -34,12 +34,14 @@ type Config struct {
 	Servers          []ServerConfig    `yaml:"servers"`
 	Tags             []TagConfig       `yaml:"tags"`
 	SecuritySchemes  map[string]Scheme `yaml:"securitySchemes"`
-	MetadataHook     string            `yaml:"metadataHook"`
-	EntryConfig      EntryConfig       `yaml:"entryConfig"`
-	RouteManifest    string            `yaml:"routeManifest"`
-	Workdir          string            `yaml:"workdir"`
-	KeepDriver       bool              `yaml:"keepDriver"`
-	Verbose          bool              `yaml:"verbose"`
+	Filters               []string    `yaml:"filters"`
+	PruneUnusedComponents bool        `yaml:"pruneUnusedComponents"`
+	MetadataHook          string      `yaml:"metadataHook"`
+	EntryConfig           EntryConfig `yaml:"entryConfig"`
+	RouteManifest         string      `yaml:"routeManifest"`
+	Workdir               string      `yaml:"workdir"`
+	KeepDriver            bool        `yaml:"keepDriver"`
+	Verbose               bool        `yaml:"verbose"`
 	// EntryAutoDiscovered is true when the entry was filled in by
 	// DiscoverEntry rather than the config file or CLI flags. CLI commands
 	// use this to surface "entry: ..." back to the user so the auto-pick is
@@ -110,38 +112,42 @@ type OAuthFlow struct {
 }
 
 type Overrides struct {
-	ConfigPath           string
-	ConfigExplicit       bool
-	Entry                string
-	EntrySet             bool
-	Out                  string
-	OutSet               bool
-	Format               string
-	FormatSet            bool
-	InfoTitle            string
-	InfoTitleSet         bool
-	InfoVersion          string
-	InfoVersionSet       bool
-	Servers              []string
-	ServersSet           bool
-	Sources              []string
-	SourcesSet           bool
-	IncludeTestFiles     bool
-	IncludeTestFilesSet  bool
-	MetadataHook         string
-	MetadataHookSet      bool
-	EntryConfigLoader    string
-	EntryConfigLoaderSet bool
-	EntryConfigPath      string
-	EntryConfigPathSet   bool
-	RouteManifest        string
-	RouteManifestSet     bool
-	Workdir              string
-	WorkdirSet           bool
-	KeepDriver           bool
-	KeepDriverSet        bool
-	Verbose              bool
-	VerboseSet           bool
+	ConfigPath               string
+	ConfigExplicit           bool
+	Entry                    string
+	EntrySet                 bool
+	Out                      string
+	OutSet                   bool
+	Format                   string
+	FormatSet                bool
+	InfoTitle                string
+	InfoTitleSet             bool
+	InfoVersion              string
+	InfoVersionSet           bool
+	Servers                  []string
+	ServersSet               bool
+	Sources                  []string
+	SourcesSet               bool
+	IncludeTestFiles         bool
+	IncludeTestFilesSet      bool
+	MetadataHook             string
+	MetadataHookSet          bool
+	EntryConfigLoader        string
+	EntryConfigLoaderSet     bool
+	EntryConfigPath          string
+	EntryConfigPathSet       bool
+	RouteManifest            string
+	RouteManifestSet         bool
+	Filters                  []string
+	FiltersSet               bool
+	PruneUnusedComponents    bool
+	PruneUnusedComponentsSet bool
+	Workdir                  string
+	WorkdirSet               bool
+	KeepDriver               bool
+	KeepDriverSet            bool
+	Verbose                  bool
+	VerboseSet               bool
 	// EntryDiscoveryScope is set by the CLI from the optional positional
 	// path argument. It limits where DiscoverEntry searches but does not
 	// affect Sources (comment extraction).
@@ -328,6 +334,10 @@ func mergeFromFile(cfg *Config, fileCfg Config, configDir string) {
 	if len(fileCfg.SecuritySchemes) > 0 {
 		cfg.SecuritySchemes = fileCfg.SecuritySchemes
 	}
+	if len(fileCfg.Filters) > 0 {
+		cfg.Filters = append([]string(nil), fileCfg.Filters...)
+	}
+	cfg.PruneUnusedComponents = fileCfg.PruneUnusedComponents
 	if fileCfg.MetadataHook != "" {
 		cfg.MetadataHook = fileCfg.MetadataHook
 	}
@@ -400,6 +410,12 @@ func applyOverrides(cfg *Config, o Overrides, cwd string) {
 	}
 	if o.RouteManifestSet {
 		cfg.RouteManifest = resolveRelative(cwd, o.RouteManifest)
+	}
+	if o.FiltersSet {
+		cfg.Filters = append([]string(nil), o.Filters...)
+	}
+	if o.PruneUnusedComponentsSet {
+		cfg.PruneUnusedComponents = o.PruneUnusedComponents
 	}
 	if o.WorkdirSet {
 		cfg.Workdir = resolveRelative(cwd, o.Workdir)

@@ -40,7 +40,9 @@ type Generator struct {
 	groups               []groupDoc
 	formatters           map[reflect.Type]*openapi3.Schema
 	errorSchema          reflect.Type
+	filters              []Filter
 	generated            bool
+	err                  error
 }
 
 // Info sets the OpenAPI info title and version.
@@ -55,6 +57,13 @@ func Info(title, version string) Option {
 func Server(url string) Option {
 	return func(g *Generator) {
 		g.spec.AddServer(&openapi3.Server{URL: url})
+	}
+}
+
+// WithFilters applies post-generation filters before the spec is serialized.
+func WithFilters(filters ...Filter) Option {
+	return func(g *Generator) {
+		g.filters = append(g.filters, filters...)
 	}
 }
 
@@ -94,12 +103,22 @@ func NewFromRouteManifest(manifest RouteManifest, opts ...Option) *Generator {
 	return g
 }
 
-// Spec returns the generated OpenAPI model. The first call walks the engine's
-// route table; subsequent calls also re-walk so freshly registered routes are
-// reflected.
+// Spec returns the generated OpenAPI model. Generation errors are ignored; call
+// SpecErr or Err when the generator was configured with filters that can fail.
 func (g *Generator) Spec() *openapi3.T {
-	g.ensureGenerated()
+	_ = g.ensureGenerated()
 	return g.spec
+}
+
+// SpecErr returns the generated OpenAPI model and any generation error.
+func (g *Generator) SpecErr() (*openapi3.T, error) {
+	err := g.ensureGenerated()
+	return g.spec, err
+}
+
+// Err returns the generation error, if any.
+func (g *Generator) Err() error {
+	return g.ensureGenerated()
 }
 
 // Regenerate forces a full re-scan of the engine's routes on the next access.
@@ -107,6 +126,7 @@ func (g *Generator) Spec() *openapi3.T {
 // JSON()/YAML() call to reflect them without retaining stale state.
 func (g *Generator) Regenerate() {
 	g.generated = false
+	g.err = nil
 	g.warnings = nil
 	g.schemaNames = make(map[reflect.Type]string)
 	g.schemaByName = make(map[string]reflect.Type)
@@ -117,21 +137,56 @@ func (g *Generator) Regenerate() {
 	g.spec.Components.Responses = openapi3.ResponseBodies{}
 }
 
-func (g *Generator) ensureGenerated() {
+func (g *Generator) ensureGenerated() error {
 	if g.generated {
-		return
+		return g.err
 	}
 	g.addSourceWarnings()
 	g.addHTTPErrorSchema()
 	g.generate()
+	if len(g.filters) > 0 {
+		filtered, err := cloneSpec(g.spec)
+		if err != nil {
+			g.err = fmt.Errorf("prepare filtered spec: %w", err)
+			g.generated = true
+			return g.err
+		}
+		if err := ApplyFilters(filtered, g.filters...); err != nil {
+			g.err = err
+			g.generated = true
+			return g.err
+		}
+		g.spec = filtered
+	}
+	g.err = nil
 	g.generated = true
+	return g.err
+}
+
+func cloneSpec(spec *openapi3.T) (*openapi3.T, error) {
+	data, err := json.Marshal(spec)
+	if err != nil {
+		return nil, err
+	}
+	var clone openapi3.T
+	if err := json.Unmarshal(data, &clone); err != nil {
+		return nil, err
+	}
+	return &clone, nil
 }
 
 // Warnings returns non-fatal generation warnings, triggering generation if it
-// has not yet happened.
+// has not yet happened. Call WarningsErr or Err to inspect fatal generation
+// errors.
 func (g *Generator) Warnings() []string {
-	g.ensureGenerated()
+	_ = g.ensureGenerated()
 	return append([]string(nil), g.warnings...)
+}
+
+// WarningsErr returns non-fatal generation warnings and any generation error.
+func (g *Generator) WarningsErr() ([]string, error) {
+	err := g.ensureGenerated()
+	return append([]string(nil), g.warnings...), err
 }
 
 func (g *Generator) warnf(format string, args ...any) {
@@ -149,13 +204,17 @@ func (g *Generator) addSourceWarnings() {
 
 // JSON serializes the generated spec as formatted JSON.
 func (g *Generator) JSON() ([]byte, error) {
-	g.ensureGenerated()
+	if err := g.ensureGenerated(); err != nil {
+		return nil, err
+	}
 	return json.MarshalIndent(g.spec, "", "  ")
 }
 
 // YAML serializes the generated spec as YAML.
 func (g *Generator) YAML() ([]byte, error) {
-	g.ensureGenerated()
+	if err := g.ensureGenerated(); err != nil {
+		return nil, err
+	}
 	return yaml.Marshal(g.spec)
 }
 

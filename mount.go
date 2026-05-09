@@ -49,7 +49,7 @@ func Mount(router Router, g *Generator, opts ...MountOption) {
 		opt(&config)
 	}
 
-	g.ensureGenerated()
+	_ = g.ensureGenerated()
 
 	if config.yamlPath != "" {
 		router.GET(config.yamlPath, YAMLHandler(g))

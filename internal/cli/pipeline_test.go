@@ -96,6 +96,75 @@ func TestRunPipelineGeneratesSpecFromRouteManifest(t *testing.T) {
 	}
 }
 
+func TestRunManifestPipelineFiltersPublicExtensionAndPrunesComponents(t *testing.T) {
+	dir := writeUserModule(t)
+	writeFile(t, filepath.Join(dir, "internal/server/public.go"), `package server
+
+import "github.com/fox-gonic/fox"
+
+// GetPublicUser fetches a public user.
+//
+// openapi:
+//
+//	x-public: true
+func GetPublicUser(ctx *fox.Context, req GetUserRequest) (User, error) {
+	return User{}, nil
+}
+
+// GetInternalUser fetches an internal user.
+//
+// openapi:
+//
+//	x-public: false
+func GetInternalUser(ctx *fox.Context, req GetUserRequest) (User, error) {
+	return User{}, nil
+}
+`)
+	manifestPath := filepath.Join(dir, "routes.manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(`{
+  "version": "fox.route-manifest/v1",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/public-users/:id",
+      "handler": "example.com/app/internal/server.GetPublicUser"
+    },
+    {
+      "method": "GET",
+      "path": "/internal-users/:id",
+      "handler": "example.com/app/internal/server.GetInternalUser"
+    }
+  ]
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	data, warnings, err := RunPipeline(Config{
+		RouteManifest:         manifestPath,
+		Out:                   "api/openapi.yaml",
+		Format:                "yaml",
+		Sources:               []string{"./internal/server"},
+		Info:                  InfoConfig{Title: "Manifest API", Version: "1.0.0"},
+		Filters:               []string{"x-public != false"},
+		PruneUnusedComponents: true,
+		Workdir:               dir,
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+	out := string(data)
+	if !strings.Contains(out, "/public-users/{id}:") {
+		t.Fatalf("generated spec missing public path:\n%s", out)
+	}
+	if strings.Contains(out, "/internal-users/{id}:") {
+		t.Fatalf("generated spec includes internal path:\n%s", out)
+	}
+}
+
 func TestRunPipelineRejectsUnsupportedRouteManifestVersion(t *testing.T) {
 	dir := t.TempDir()
 	manifestPath := filepath.Join(dir, "routes.manifest.json")
