@@ -121,6 +121,7 @@ func (g *Generator) ensureGenerated() {
 	if g.generated {
 		return
 	}
+	g.addSourceWarnings()
 	g.addHTTPErrorSchema()
 	g.generate()
 	g.generated = true
@@ -135,6 +136,15 @@ func (g *Generator) Warnings() []string {
 
 func (g *Generator) warnf(format string, args ...any) {
 	g.warnings = append(g.warnings, fmt.Sprintf(format, args...))
+}
+
+func (g *Generator) addSourceWarnings() {
+	if g.docs == nil {
+		return
+	}
+	for _, warning := range g.docs.warnings {
+		g.warnf("%s", warning)
+	}
 }
 
 // JSON serializes the generated spec as formatted JSON.

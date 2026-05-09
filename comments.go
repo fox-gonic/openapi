@@ -83,9 +83,6 @@ func Source(paths []string, opts ...SourceOption) Option {
 				g.warnf("openapi source %q: %v", path, err)
 			}
 		}
-		for _, warning := range docs.warnings {
-			g.warnf("%s", warning)
-		}
 		g.docs = docs
 	}
 }

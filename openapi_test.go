@@ -577,6 +577,22 @@ func TestGenerateWarnsForInvalidOpenAPICommentBlock(t *testing.T) {
 	require.Contains(t, g.Warnings()[0], "invalid openapi comment block")
 }
 
+func TestRegenerateRetainsInvalidOpenAPICommentBlockWarning(t *testing.T) {
+	engine := fox.New()
+	engine.POST("/invalid-openapi-comment", createInvalidOpenAPICommentUser)
+
+	g := openapi.New(engine,
+		openapi.Info("Fox Test API", "1.0.0"),
+		openapi.Source([]string{"./..."}, openapi.IncludeTestFiles()),
+	)
+	require.Len(t, g.Warnings(), 1)
+
+	g.Regenerate()
+
+	require.Len(t, g.Warnings(), 1)
+	require.Contains(t, g.Warnings()[0], "openapi_test.createInvalidOpenAPICommentUser")
+}
+
 func TestGenerateReadsFieldLineCommentsFromSource(t *testing.T) {
 	engine := fox.New()
 	engine.GET("/line-comment", getLineComment)
