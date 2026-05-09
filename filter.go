@@ -436,7 +436,9 @@ func collectRefs(value any, addRef func(string)) {
 					addRef(ref)
 				}
 			case "mapping":
-				collectComponentRefStrings(child, addRef)
+				if isDiscriminatorObject(typed) {
+					collectComponentRefStrings(child, addRef)
+				}
 			}
 			collectRefs(child, addRef)
 		}
@@ -445,6 +447,11 @@ func collectRefs(value any, addRef func(string)) {
 			collectRefs(child, addRef)
 		}
 	}
+}
+
+func isDiscriminatorObject(value map[string]any) bool {
+	propertyName, ok := value["propertyName"].(string)
+	return ok && propertyName != ""
 }
 
 func collectComponentRefStrings(value any, addRef func(string)) {

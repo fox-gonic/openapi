@@ -206,6 +206,34 @@ func TestPruneUnusedComponentsKeepsDiscriminatorMappingSchemaNames(t *testing.T)
 	require.NotContains(t, spec.Components.Schemas, "Unused")
 }
 
+func TestPruneUnusedComponentsIgnoresNonDiscriminatorMappingValues(t *testing.T) {
+	container := openapi3.NewObjectSchema()
+	container.Extensions = map[string]any{
+		"mapping": map[string]any{"shadow": "Shadow"},
+	}
+	spec := &openapi3.T{
+		Paths: openapi3.NewPaths(),
+		Components: &openapi3.Components{
+			Schemas: openapi3.Schemas{
+				"Container": openapi3.NewSchemaRef("", container),
+				"Shadow":    openapi3.NewSchemaRef("", openapi3.NewObjectSchema()),
+			},
+		},
+	}
+	spec.Paths.Set("/containers", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "containers",
+		Responses: openapi3.NewResponses(openapi3.WithStatus(http.StatusOK, &openapi3.ResponseRef{Value: openapi3.NewResponse().
+			WithDescription("OK").
+			WithJSONSchemaRef(&openapi3.SchemaRef{Ref: "#/components/schemas/Container"})})),
+	}})
+
+	err := openapi.ApplyFilters(spec, openapi.PruneUnusedComponents())
+
+	require.NoError(t, err)
+	require.Contains(t, spec.Components.Schemas, "Container")
+	require.NotContains(t, spec.Components.Schemas, "Shadow")
+}
+
 func TestPruneUnusedComponentsKeepsOperationRefComponentRefs(t *testing.T) {
 	spec := &openapi3.T{
 		Paths: openapi3.NewPaths(),
