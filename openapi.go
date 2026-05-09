@@ -42,6 +42,7 @@ type Generator struct {
 	errorSchema          reflect.Type
 	filters              []Filter
 	generated            bool
+	err                  error
 }
 
 // Info sets the OpenAPI info title and version.
@@ -102,12 +103,22 @@ func NewFromRouteManifest(manifest RouteManifest, opts ...Option) *Generator {
 	return g
 }
 
-// Spec returns the generated OpenAPI model. The first call walks the engine's
-// route table; subsequent calls also re-walk so freshly registered routes are
-// reflected.
+// Spec returns the generated OpenAPI model. Call SpecErr or Err when the
+// generator was configured with filters that can fail.
 func (g *Generator) Spec() *openapi3.T {
 	_ = g.ensureGenerated()
 	return g.spec
+}
+
+// SpecErr returns the generated OpenAPI model and any generation error.
+func (g *Generator) SpecErr() (*openapi3.T, error) {
+	err := g.ensureGenerated()
+	return g.spec, err
+}
+
+// Err returns the generation error, if any.
+func (g *Generator) Err() error {
+	return g.ensureGenerated()
 }
 
 // Regenerate forces a full re-scan of the engine's routes on the next access.
@@ -115,6 +126,7 @@ func (g *Generator) Spec() *openapi3.T {
 // JSON()/YAML() call to reflect them without retaining stale state.
 func (g *Generator) Regenerate() {
 	g.generated = false
+	g.err = nil
 	g.warnings = nil
 	g.schemaNames = make(map[reflect.Type]string)
 	g.schemaByName = make(map[string]reflect.Type)
@@ -127,23 +139,28 @@ func (g *Generator) Regenerate() {
 
 func (g *Generator) ensureGenerated() error {
 	if g.generated {
-		return nil
+		return g.err
 	}
 	g.addSourceWarnings()
 	g.addHTTPErrorSchema()
 	g.generate()
-	if err := ApplyFilters(g.spec, g.filters...); err != nil {
-		return err
-	}
+	g.err = ApplyFilters(g.spec, g.filters...)
 	g.generated = true
-	return nil
+	return g.err
 }
 
 // Warnings returns non-fatal generation warnings, triggering generation if it
-// has not yet happened.
+// has not yet happened. Call WarningsErr or Err to inspect fatal generation
+// errors.
 func (g *Generator) Warnings() []string {
 	_ = g.ensureGenerated()
 	return append([]string(nil), g.warnings...)
+}
+
+// WarningsErr returns non-fatal generation warnings and any generation error.
+func (g *Generator) WarningsErr() ([]string, error) {
+	err := g.ensureGenerated()
+	return append([]string(nil), g.warnings...), err
 }
 
 func (g *Generator) warnf(format string, args ...any) {

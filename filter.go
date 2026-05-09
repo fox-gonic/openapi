@@ -155,7 +155,10 @@ type operationFilterCondition struct {
 type operationFilterConditionGroup []operationFilterCondition
 
 func parseOperationFilterExpressionGroup(expression string) (operationFilterConditionGroup, error) {
-	parts := strings.Split(expression, "||")
+	parts, err := splitFilterAlternatives(expression)
+	if err != nil {
+		return nil, err
+	}
 	conditions := make(operationFilterConditionGroup, 0, len(parts))
 	for _, part := range parts {
 		condition, err := parseOperationFilterExpression(part)
@@ -165,6 +168,39 @@ func parseOperationFilterExpressionGroup(expression string) (operationFilterCond
 		conditions = append(conditions, condition)
 	}
 	return conditions, nil
+}
+
+func splitFilterAlternatives(expression string) ([]string, error) {
+	var parts []string
+	start := 0
+	var quote byte
+	for i := 0; i < len(expression); i++ {
+		c := expression[i]
+		if quote != 0 {
+			if quote == '"' && c == '\\' {
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		if c == '\'' || c == '"' {
+			quote = c
+			continue
+		}
+		if c == '|' && i+1 < len(expression) && expression[i+1] == '|' {
+			parts = append(parts, strings.TrimSpace(expression[start:i]))
+			i++
+			start = i + 1
+		}
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("filter %q: unterminated quoted value", expression)
+	}
+	parts = append(parts, strings.TrimSpace(expression[start:]))
+	return parts, nil
 }
 
 func parseOperationFilterExpression(expression string) (operationFilterCondition, error) {
@@ -254,6 +290,11 @@ func reachableComponentRefs(spec *openapi3.T) (map[string]struct{}, error) {
 	reachable := map[string]struct{}{}
 	queue := []string{}
 	addRef := func(ref string) {
+		rootRef, ok := componentRootRef(ref)
+		if !ok {
+			return
+		}
+		ref = rootRef
 		if _, ok := reachable[ref]; ok {
 			return
 		}
@@ -283,15 +324,11 @@ func reachableComponentRefs(spec *openapi3.T) (map[string]struct{}, error) {
 	for len(queue) > 0 {
 		ref := queue[0]
 		queue = queue[1:]
-		component, ok := componentValue(spec.Components, ref)
+		component, ok := componentJSONValue(root, ref)
 		if !ok {
 			continue
 		}
-		value, err := jsonObject(component)
-		if err != nil {
-			return nil, fmt.Errorf("inspect component %s refs: %w", ref, err)
-		}
-		collectRefs(value, addRef)
+		collectRefs(component, addRef)
 	}
 	return reachable, nil
 }
@@ -348,42 +385,25 @@ func collectSecurityRequirementRefs(requirements openapi3.SecurityRequirements, 
 	}
 }
 
-func componentValue(components *openapi3.Components, ref string) (any, bool) {
+func componentJSONValue(root any, ref string) (any, bool) {
 	group, name, ok := splitComponentRef(ref)
 	if !ok {
 		return nil, false
 	}
-	switch group {
-	case "schemas":
-		value, ok := components.Schemas[name]
-		return value, ok
-	case "responses":
-		value, ok := components.Responses[name]
-		return value, ok
-	case "parameters":
-		value, ok := components.Parameters[name]
-		return value, ok
-	case "requestBodies":
-		value, ok := components.RequestBodies[name]
-		return value, ok
-	case "headers":
-		value, ok := components.Headers[name]
-		return value, ok
-	case "securitySchemes":
-		value, ok := components.SecuritySchemes[name]
-		return value, ok
-	case "examples":
-		value, ok := components.Examples[name]
-		return value, ok
-	case "links":
-		value, ok := components.Links[name]
-		return value, ok
-	case "callbacks":
-		value, ok := components.Callbacks[name]
-		return value, ok
-	default:
+	object, ok := root.(map[string]any)
+	if !ok {
 		return nil, false
 	}
+	components, ok := object["components"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	groupValues, ok := components[group].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	value, ok := groupValues[name]
+	return value, ok
 }
 
 func pruneComponentMaps(components *openapi3.Components, reachable map[string]struct{}) {
@@ -408,11 +428,28 @@ func pruneByGroup[V any](m map[string]V, group string, reachable map[string]stru
 }
 
 func splitComponentRef(ref string) (string, string, bool) {
-	parts := strings.Split(ref, "/")
-	if len(parts) != 4 || parts[0] != "#" || parts[1] != "components" {
+	const prefix = "#/components/"
+	if !strings.HasPrefix(ref, prefix) {
 		return "", "", false
 	}
-	return unescapeJSONPointer(parts[2]), unescapeJSONPointer(parts[3]), true
+	remainder := strings.TrimPrefix(ref, prefix)
+	group, rest, ok := strings.Cut(remainder, "/")
+	if !ok || group == "" || rest == "" {
+		return "", "", false
+	}
+	name, _, _ := strings.Cut(rest, "/")
+	if name == "" {
+		return "", "", false
+	}
+	return unescapeJSONPointer(group), unescapeJSONPointer(name), true
+}
+
+func componentRootRef(ref string) (string, bool) {
+	group, name, ok := splitComponentRef(ref)
+	if !ok {
+		return "", false
+	}
+	return "#/components/" + escapeJSONPointer(group) + "/" + escapeJSONPointer(name), true
 }
 
 func escapeJSONPointer(value string) string {

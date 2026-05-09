@@ -80,7 +80,10 @@ func runManifestPipeline(cfg Config) ([]byte, []string, error) {
 		return nil, nil, err
 	}
 	g := openapi.NewFromRouteManifest(manifest, opts...)
-	spec := g.Spec()
+	spec, err := g.SpecErr()
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate spec: %w", err)
+	}
 	openapi.ApplySpecMetadata(spec, specMetadata(cfg))
 	var out []byte
 	if cfg.Format == FormatJSON {

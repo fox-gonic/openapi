@@ -66,7 +66,11 @@ func main() {
 	opts = append(opts, userhook.{{.Hook.FuncName}}()...)
 	{{- end }}
 	g := openapi.New(engine, opts...)
-	spec := g.Spec()
+	spec, err2 := g.SpecErr()
+	if err2 != nil {
+		fmt.Fprintf(os.Stderr, "generate spec: %v\n", err2)
+		os.Exit(1)
+	}
 	openapi.ApplySpecMetadata(spec, openapi.SpecMetadata{
 		InfoDescription: {{quote .InfoDescription}},
 		ServerDescriptions: []string{
@@ -81,7 +85,6 @@ func main() {
 		},
 	})
 	var out []byte
-	var err2 error
 	{{- if eq .Format "json" }}
 	out, err2 = g.JSON()
 	{{- else }}

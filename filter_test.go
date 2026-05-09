@@ -76,6 +76,30 @@ func TestPruneUnusedComponentsRemovesFilteredOperationRefs(t *testing.T) {
 	require.NotContains(t, spec.Components.SecuritySchemes, "Internal")
 }
 
+func TestPruneUnusedComponentsKeepsComponentReachedBySubpathRef(t *testing.T) {
+	spec := &openapi3.T{
+		Paths: openapi3.NewPaths(),
+		Components: &openapi3.Components{
+			Schemas: openapi3.Schemas{
+				"User":   openapi3.NewSchemaRef("", openapi3.NewObjectSchema().WithProperty("name", openapi3.NewStringSchema())),
+				"Unused": openapi3.NewSchemaRef("", openapi3.NewObjectSchema()),
+			},
+		},
+	}
+	spec.Paths.Set("/user-name", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "userName",
+		Responses: openapi3.NewResponses(openapi3.WithStatus(http.StatusOK, &openapi3.ResponseRef{Value: openapi3.NewResponse().
+			WithDescription("OK").
+			WithJSONSchemaRef(&openapi3.SchemaRef{Ref: "#/components/schemas/User/properties/name"})})),
+	}})
+
+	err := openapi.ApplyFilters(spec, openapi.PruneUnusedComponents())
+
+	require.NoError(t, err)
+	require.Contains(t, spec.Components.Schemas, "User")
+	require.NotContains(t, spec.Components.Schemas, "Unused")
+}
+
 func TestOperationExtensionBoolDefault(t *testing.T) {
 	op := openapi.OperationContext{Operation: &openapi3.Operation{Extensions: map[string]any{"x-public": false}}}
 
@@ -137,8 +161,35 @@ func TestFilterOperationExpressionSupportsOrConditions(t *testing.T) {
 	require.Nil(t, spec.Paths.Value("/admin"))
 }
 
+func TestFilterOperationExpressionKeepsQuotedOrLiteralTogether(t *testing.T) {
+	spec := &openapi3.T{Paths: openapi3.NewPaths()}
+	spec.Paths.Set("/compound", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "compound",
+		Extensions:  map[string]any{"x-product": "A || B"},
+	}})
+	spec.Paths.Set("/simple", &openapi3.PathItem{Get: &openapi3.Operation{
+		OperationID: "simple",
+		Extensions:  map[string]any{"x-product": "A"},
+	}})
+
+	productFilter, err := openapi.FilterOperationExpression(`x-product = "A || B"`)
+	require.NoError(t, err)
+
+	err = openapi.ApplyFilters(spec, productFilter)
+
+	require.NoError(t, err)
+	require.NotNil(t, spec.Paths.Value("/compound"))
+	require.Nil(t, spec.Paths.Value("/simple"))
+}
+
 func TestFilterOperationExpressionRejectsUnsupportedExpression(t *testing.T) {
 	_, err := openapi.FilterOperationExpression("x-public > false")
+
+	require.Error(t, err)
+}
+
+func TestFilterOperationExpressionRejectsUnterminatedQuotedValue(t *testing.T) {
+	_, err := openapi.FilterOperationExpression(`x-product = "sandbox`)
 
 	require.Error(t, err)
 }
